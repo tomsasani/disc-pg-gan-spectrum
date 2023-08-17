@@ -25,23 +25,34 @@ def simulate_exp(params, sample_sizes, seed):
 
     N0 = N2 / math.exp(-params.growth.value * T2)
 
-    demographic_events = [
-        msprime.PopulationParametersChange(time=0,
-                                           initial_size=N0,
-                                           growth_rate=params.growth.value,),
-        msprime.PopulationParametersChange(time=T2,
-                                           initial_size=N2,
-                                           growth_rate=0),
-        msprime.PopulationParametersChange(time=params.T1.value,
-                                           initial_size=params.N1.value),
-    ]
+    # demographic_events = [
+    #     msprime.PopulationParametersChange(time=0,
+    #                                        initial_size=N0,
+    #                                        growth_rate=params.growth.value,),
+    #     msprime.PopulationParametersChange(time=T2,
+    #                                        initial_size=N2,
+    #                                        growth_rate=0),
+    #     msprime.PopulationParametersChange(time=params.T1.value,
+    #                                        initial_size=params.N1.value),
+    # ]
 
-    ts = msprime.simulate(
-        sample_size=sum(sample_sizes),
-        demographic_events=demographic_events,
-        mutation_rate=params.mu.value,
-        length=global_vars.L,
+    demography = msprime.Demography()
+    demography.add_population(name="A", initial_size=N0, growth_rate=params.growth.value,)
+    #demography.add_population(name="B", initial_size=100)
+    #demography.add_population_parameters_change(time=0, initial_size=N0, growth_rate=params.growth.value)
+    demography.add_population_parameters_change(population="A", time=T2, initial_size=N2, growth_rate=0,)
+    demography.add_population_parameters_change(population="A", time=params.T1.value, initial_size=params.N1.value,)
+
+
+    ts = msprime.sim_ancestry(
+        samples=sum(sample_sizes),
+        demography=demography,
+        #mutation_rate=params.mu.value,
+        sequence_length=global_vars.L,
         recombination_rate=params.rho.value,
+        gene_conversion_rate=params.conversion.value,
+        gene_conversion_tract_length=params.conversion_length.value,
+        discrete_genome=True,
         random_seed=seed,
     )
 
@@ -61,6 +72,7 @@ def simulate_exp(params, sample_sizes, seed):
         rate=params.mu.value,
         model=msprime.F84(kappa=params.kappa.value),
         random_seed=seed,
+        discrete_genome=True,
     )
 
     return mts
