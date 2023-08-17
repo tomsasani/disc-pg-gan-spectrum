@@ -15,7 +15,7 @@ import global_vars
 import param_set
 import real_data_random
 import simulation
-from slim_iterator import SlimIterator
+# from slim_iterator import SlimIterator
 
 def parse_params(param_input, all_params):
     """See which params were desired for inference"""
@@ -38,65 +38,59 @@ def filter_func(x, rate): # currently not used
         return True
     return np.random.random() >= rate # keep (1-rate) of singletons
 
-def process_gt_dist(gt_matrix, dist_vec, region_len=False, real=False,
-    neg1=True):
-    """
-    Take in a genotype matrix and vector of inter-SNP distances. Return a 3D
-    numpy array of the given n (haps) and S (SNPs) and 2 channels.
-    Filter singletons at given rate if filter=True
-    """
-    og_snps = gt_matrix.shape[0]
+# def process_gt_dist(gt_matrix, region_len=False, real=False,
+#     neg1=True):
+#     """
+#     Take in a genotype matrix and vector of inter-SNP distances. Return a 3D
+#     numpy array of the given n (haps) and S (SNPs) and 2 channels.
+#     Filter singletons at given rate if filter=True
+#     """
+#     og_snps = gt_matrix.shape[0]
 
-    if (real and global_vars.FILTER_REAL_DATA) or (not real and
-        global_vars.FILTER_SIMULATED):
-        # mask
-        singleton_mask = np.array([filter_func(row, global_vars.FILTER_RATE,
-            gt_matrix.shape[1] - 1) for row in gt_matrix])
+#     if (real and global_vars.FILTER_REAL_DATA) or (not real and
+#         global_vars.FILTER_SIMULATED):
+#         # mask
+#         singleton_mask = np.array([filter_func(row, global_vars.FILTER_RATE,
+#             gt_matrix.shape[1] - 1) for row in gt_matrix])
 
-        # reassign
-        gt_matrix = gt_matrix[singleton_mask]
-        dist_vec = np.array(dist_vec)[singleton_mask]
+#         # reassign
+#         gt_matrix = gt_matrix[singleton_mask]
 
-    num_SNPs = gt_matrix.shape[0] # SNPs x n
-    n = gt_matrix.shape[1]
+#     num_SNPs = gt_matrix.shape[0] # SNPs x n
+#     S = gt_matrix.shape[1]
+#     assert S == global_vars.NUM_SAMPLES * 2
 
-    # double check
-    if num_SNPs != len(dist_vec):
-        print("gt", num_SNPs, "dist", len(dist_vec))
-    assert num_SNPs == len(dist_vec)
+#     # set up region
+#     region = np.zeros((S, global_vars.NUM_SNPS, 6), dtype=np.float32)
 
-    # used for trimming (don't trim if using the entire region)
-    S = num_SNPs if region_len else global_vars.NUM_SNPS
+#     mid = num_SNPs // 2
+#     half_S = S // 2
+#     if S % 2 == 1: # odd
+#         other_half_S = half_S + 1
+#     else:
+#         other_half_S = half_S
 
-    # set up region
-    region = np.zeros((n, S, 2), dtype=np.float32)
+#     # enough SNPs, take middle portion
+#     if mid >= half_S:
+#         minor = major_minor(
+#             gt_matrix[mid - half_S:mid + other_half_S, :].transpose(),
+#             neg1,
+#         )
+#         region[:,:,0] = minor
+#         distances = np.vstack([np.copy(dist_vec[mid-half_S:mid+other_half_S])
+#             for k in range(n)])
+#         region[:,:,1] = distances
 
-    mid = num_SNPs//2
-    half_S = S//2
-    if S % 2 == 1: # odd
-        other_half_S = half_S+1
-    else:
-        other_half_S = half_S
+#     # not enough SNPs, need to center-pad
+#     else:
+#         # print("NOT ENOUGH SNPS", num_SNPs)
+#         # print(num_SNPs, S, mid, half_S)
+#         minor = major_minor(gt_matrix.transpose(), neg1)
+#         region[:,half_S-mid:half_S-mid+num_SNPs,0] = minor
+#         distances = np.vstack([np.copy(dist_vec) for k in range(n)])
+#         region[:,half_S-mid:half_S-mid+num_SNPs,1] = distances
 
-    # enough SNPs, take middle portion
-    if mid >= half_S:
-        minor = major_minor(gt_matrix[mid-half_S:mid+
-            other_half_S,:].transpose(), neg1)
-        region[:,:,0] = minor
-        distances = np.vstack([np.copy(dist_vec[mid-half_S:mid+other_half_S])
-            for k in range(n)])
-        region[:,:,1] = distances
-
-    # not enough SNPs, need to center-pad
-    else:
-        # print("NOT ENOUGH SNPS", num_SNPs)
-        # print(num_SNPs, S, mid, half_S)
-        minor = major_minor(gt_matrix.transpose(), neg1)
-        region[:,half_S-mid:half_S-mid+num_SNPs,0] = minor
-        distances = np.vstack([np.copy(dist_vec) for k in range(n)])
-        region[:,half_S-mid:half_S-mid+num_SNPs,1] = distances
-
-    return region # n X SNPs X 2
+#     return region # n X SNPs X 2
 
 def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
@@ -291,45 +285,45 @@ def process_opts(opts, summary_stats = False):
                                                            bed_file=opts.bed)
         ss_total = iterator.num_samples
 
-    # parse model and simulator
-    if opts.model == 'const':
-        num_pops = 1
-        simulator = simulation.simulate_const
+    # # parse model and simulator
+    # if opts.model == 'const':
+    #     num_pops = 1
+    #     simulator = simulation.simulate_const
 
-    # exp growth
-    elif opts.model == 'exp':
-        num_pops = 1
-        simulator = simulation.simulate_exp
+    # # exp growth
+    # elif opts.model == 'exp':
+    num_pops = 1
+    simulator = simulation.simulate_exp
 
-    # isolation-with-migration model (2 populations)
-    elif opts.model == 'im':
-        num_pops = 2
-        simulator = simulation.simulate_im
+    # # isolation-with-migration model (2 populations)
+    # elif opts.model == 'im':
+    #     num_pops = 2
+    #     simulator = simulation.simulate_im
 
-    # out-of-Africa model (2 populations)
-    elif opts.model in ['ooa2', 'fsc']:
-        num_pops = 2
-        simulator = simulation.simulate_ooa2
+    # # out-of-Africa model (2 populations)
+    # elif opts.model in ['ooa2', 'fsc']:
+    #     num_pops = 2
+    #     simulator = simulation.simulate_ooa2
 
-    # MSMC
-    # elif opts.model == 'msmc':
-    #     print("\nALERT you are running MSMC sim!\n")
-    #     sample_sizes = get_sample_sizes(sample_size_total, 2)
-    #     simulator = simulate_py_from_MSMC_IM.simulate_msmc
+    # # MSMC
+    # # elif opts.model == 'msmc':
+    # #     print("\nALERT you are running MSMC sim!\n")
+    # #     sample_sizes = get_sample_sizes(sample_size_total, 2)
+    # #     simulator = simulate_py_from_MSMC_IM.simulate_msmc
 
-    # CEU/CHB (2 populations)
-    elif opts.model == 'post_ooa':
-        num_pops = 2
-        simulator = simulation.simulate_postOOA
+    # # CEU/CHB (2 populations)
+    # elif opts.model == 'post_ooa':
+    #     num_pops = 2
+    #     simulator = simulation.simulate_postOOA
 
-    # out-of-Africa model (3 populations)
-    elif opts.model == 'ooa3':
-        num_pops = 3
-        simulator = simulation.simulate_ooa3
+    # # out-of-Africa model (3 populations)
+    # elif opts.model == 'ooa3':
+    #     num_pops = 3
+    #     simulator = simulation.simulate_ooa3
 
-    # no other options
-    else:
-        sys.exit(opts.model + " is not recognized")
+    # # no other options
+    # else:
+    #     sys.exit(opts.model + " is not recognized")
 
     if (global_vars.FILTER_SIMULATED or global_vars.FILTER_REAL_DATA):
         print("FILTERING SINGLETONS")
@@ -339,25 +333,35 @@ def process_opts(opts, summary_stats = False):
     sample_sizes = [sample_size_total//num_pops for i in range(num_pops)]
 
 
-    if real and opts.slim:
-         gen = SlimIterator(opts.slim)
-         print("using slim generator")
-    else:
-        gen = generator.Generator(simulator, param_names, sample_sizes,
-        opts.seed, mirror_real=real, reco_folder=opts.reco_folder)
+    # if real and opts.slim:
+    #      gen = SlimIterator(opts.slim)
+    #      print("using slim generator")
+    # else:
+    gen = generator.Generator(
+        simulator,
+        param_names,
+        #sample_sizes,
+        opts.seed,
+        mirror_real=real,
+        reco_folder=opts.reco_folder,
+    )
 
     if opts.data_h5 == None:
 
-        if opts.slim is not None:
-            print("using slim iterator :)")
-            iterator = SlimIterator(opts.slim)
+        # if opts.slim is not None:
+        #     print("using slim iterator :)")
+        #     iterator = SlimIterator(opts.slim)
 
-        else:
-            # "real data" is simulated with fixed params
-            iterator = generator.Generator(simulator, param_names, sample_sizes,
-                                            opts.seed) # don't need reco_folder
+        # else:
+        # "real data" is simulated with fixed params
+        iterator = generator.Generator(
+            simulator,
+            param_names,
+            #sample_sizes,
+            opts.seed,
+        )  # don't need reco_folder
 
-    return gen, iterator, parameters, sample_sizes
+    return gen, iterator, parameters#, sample_sizes
 
 if __name__ == "__main__":
     # test major/minor and post-processing
