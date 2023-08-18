@@ -7,11 +7,15 @@ Date: 9/27/22
 
 # python imports
 from collections import defaultdict
-import h5py
 import numpy as np
 from numpy.random import default_rng
 import sys
 import datetime
+from bx.intervals.intersection import Interval, IntervalTree
+import gzip
+import csv
+from collections import defaultdict
+from cyvcf2 import VCF
 
 # our imports
 import global_vars
@@ -25,257 +29,147 @@ class Region:
         self.end_pos = int(end_pos)
         self.region_len = end_pos - start_pos # L
 
-    def __str__(self):
-        s = str(self.chrom) + ":" + str(self.start_pos) + "-" +str(self.end_pos)
-        return s
 
-    def inside_mask(self, mask_dict, frac_callable = 0.5):
-        if mask_dict is None:
-            return True
+def read_exclude(fh: str) -> IntervalTree:
+    """
+    Read in a BED file containing genomic regions from which we want
+    to exclude potential variants. Riley et al. 2023 use a callability mask,
+    but for my purposes I'll stick to a known file (Heng Li's LCR file for 
+    hg19/hg38).
 
-        if (not self.chrom in mask_dict.keys()) or mask_dict[self.chrom] == []:
-            return False
+    Args:
+        fh (str): Path to filename containing regions. Must be BED-formatted. Can be \
+            uncompressed or gzipped.
 
-        mask_lst = mask_dict[self.chrom] # restrict to this chrom
-        region_start_idx, start_inside = binary_search(self.start_pos, mask_lst)
-        region_end_idx, end_inside = binary_search(self.end_pos, mask_lst)
+    Returns:
+        tree (Dict[IntervalTree]): Dictionary of IntervalTree objects, with one key per \
+            chromosome. Each IntervalTree containing the BED regions from `fh`, on which we can \
+            quickly perform binary searches later.
+    """
 
-        # same region index
-        if region_start_idx == region_end_idx:
-            if start_inside and end_inside: # both inside
-                return True
-            elif (not start_inside) and (not end_inside): # both outside
-                return False
-            elif start_inside:
-                part_inside = mask_lst[region_start_idx][1] - self.start_pos
-            else:
-                part_inside = self.end_pos - mask_lst[region_start_idx][0]
+    tree = defaultdict(IntervalTree())
+    is_zipped = fh.endswith(".gz")
 
-            return part_inside/self.region_len >= frac_callable
+    with gzip.open(fh) if is_zipped else open(fh) as infh:
+        csvf = csv.reader(infh, delimiter="\t")
+        for l in csvf:
+            if l[0].startswith("#"): continue
+            chrom, start, end = l
+            interval = Interval(int(start), int(end))
+            tree[chrom].insert_interval(interval)
 
-        # different region index
-        part_inside = 0
-        # conservatively add at first
-        for region_idx in range(region_start_idx+1, region_end_idx):
-            part_inside += (mask_lst[region_idx][1] - mask_lst[region_idx][0])
+    return tree
 
-        # add on first if inside
-        if start_inside:
-            part_inside += (mask_lst[region_start_idx][1] - self.start_pos)
-        elif self.start_pos >= mask_lst[region_start_idx][1]:
-            # start after closest region, don't add anything
-            pass
-        else:
-            part_inside += (mask_lst[region_start_idx][1] -
-                mask_lst[region_start_idx][0])
+def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) -> np.ndarray:
+    revcomp = {"A": "T", "T": "A", "C": "G", "G": "C"}
+    mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 
-        # add on last if inside
-        if end_inside:
-            part_inside += (self.end_pos - mask_lst[region_end_idx][0])
-        elif self.end_pos <= mask_lst[region_end_idx][0]:
-            # end before closest region, don't add anything
-            pass
-        else:
-            part_inside += (mask_lst[region_end_idx][1] -
-                mask_lst[region_end_idx][0])
+    out_arr = np.zeros((end - start, n_haps, 6), dtype=np.int8)
+    called_positions = np.zeros(end - start, dtype=np.int8)
 
-        return part_inside/self.region_len >= frac_callable
+    region_str = f"{chrom}:{start}-{end}"
+    
+    # TODO: write function to filter variants (FILTER, etc.) on the fly,
+    # rather than requiring preprocessing using e.g., bcftools prior.
+    for v in VCF(region_str):
+        # require single-nucleotide variants
+        if v.var_type != "snp": continue
+        # filter out multi-allelics
+        if len(v.ALT) > 1: continue
+        ref, alt = v.REF.upper(), v.ALT[0].upper()
+        if ref in ("G", "T"):
+            ref, alt = revcomp[ref], revcomp[alt]
+        mutation = ">".join([ref, alt])
+        mut_i = mut2idx[mutation]
 
-def read_mask(filename):
-    """Read from bed file"""
+        vi = v.start - start
+        out_arr[vi, :, mut_i] = np.array(v.genotypes)[:, :-1].flatten()
+        called_positions[vi] = 1
+    
+    # subset out_arr to the places (out of size end - start) where
+    # we actually called a mutation 
+    out_arr_sub = out_arr[np.where(called_positions)[0], :, :]
+    return out_arr_sub
 
-    mask_dict = {}
-    f = open(filename,'r')
-
-    for line in f:
-        tokens = line.split()
-        chrom_str = tokens[0][3:]
-        if chrom_str != 'X' and chrom_str != 'Y':
-            begin = int(tokens[1])
-            end = int(tokens[2])
-
-            if chrom_str in mask_dict:
-                mask_dict[chrom_str].append([begin,end])
-            else:
-                mask_dict[chrom_str] = [[begin,end]]
-
-    f.close()
-    return mask_dict
-
-def binary_search(q, lst):
-    low = 0
-    high = len(lst)-1
-
-    while low <= high:
-
-        mid = (low+high)//2
-        if lst[mid][0] <= q <= lst[mid][1]: # inside region
-            return mid, True
-        elif q < lst[mid][0]:
-            high = mid-1
-        else:
-            low = mid+1
-
-    return mid, False # something close
 
 class RealDataRandomIterator:
 
-    def __init__(self, filename, seed, bed_file=None, chrom_starts=False):
+    def __init__(self, vcf_fh, seed, bed_file=None, chrom_starts=False):
         self.rng = default_rng(seed)
         
-        callset = h5py.File(filename, mode='r')
-        print(list(callset.keys()))
-        # output: ['GT'] ['CHROM', 'POS']
-        print(list(callset['calldata'].keys()),list(callset['variants'].keys()))
-
-        raw = callset['calldata/GT']
-        print("raw", raw.shape)
-
-        newshape = (raw.shape[0], -1)
-        self.haps_all = np.reshape(raw, newshape)
-        self.haps_all[self.haps_all<0] = 0 # -1 is missing, replacing w/ 0 for now but need a better way! TODO
-        self.pos_all = callset['variants/POS']
-
-        # same length as pos_all, noting chrom for each variant (sorted)
-        self.chrom_all = callset['variants/CHROM']
-        print("after haps", self.haps_all.shape)
-        self.num_samples = self.haps_all.shape[1]
-
-        '''print(self.pos_all.shape)
-        print(self.pos_all.chunks)
-        print(self.chrom_all.shape)
-        print(self.chrom_all.chunks)'''
-        self.num_snps = len(self.pos_all) # total for all chroms
-
-        # mask
-        self.mask_dict = read_mask(bed_file) if bed_file is not None else None
-
-        # useful for fastsimcoal and msmc
-        if chrom_starts:
-            self.chrom_counts = defaultdict(int)
-            for x in list(self.chrom_all):
-                self.chrom_counts[int(x)] += 1
-
-    def find_end(self, start_idx):
-        """
-        Based on the given start_idx and the region_len, find the end index
-        """
-        ln = 0
-        chrom = global_vars.parse_chrom(self.chrom_all[start_idx])
-        i = start_idx
-        curr_pos = self.pos_all[start_idx]
-        while ln < global_vars.L:
-
-            if len(self.pos_all) <= i+1:
-                print("not enough on chrom", chrom)
-                return -1 # not enough on last chrom
-
-            next_pos = self.pos_all[i+1]
-            if global_vars.parse_chrom(self.chrom_all[i+1]) == chrom:
-                diff = next_pos - curr_pos
-                ln += diff
-            else:
-                print("not enough on chrom", chrom)
-                return -1 # not enough on this chrom
-            i += 1
-            curr_pos = next_pos
-
-        return i # exclusive
-
-    def real_region(self, neg1, region_len, start_idx=None, iterative=False):
-
-        if start_idx is None:
-            # inclusive
-            start_idx = self.rng.integers(0, self.num_snps - global_vars.NUM_SNPS)
-
-        if region_len:
-            end_idx = self.find_end(start_idx)
-            if end_idx == -1:
-                if start_idx is None:
-                    return self.real_region(neg1, region_len) # try again
-                else:
-                    if iterative:
-                        return None # no recursion if walking through the genome
-                    return self.real_region(neg1, region_len)
+        vcf = VCF(vcf_fh)
+        self.vcf_ = vcf
+        self.num_samples = len(vcf.samples) * 2
         
-        else:
-            end_idx = start_idx + global_vars.NUM_SNPS # exclusive
+        # map chromosome names to chromosome lengths
+        seq2len = dict(zip(vcf.seqnames, vcf.seqlens))
+        self.sequence_lengths = seq2len
 
-        # make sure we don't span two chroms
-        start_chrom = self.chrom_all[start_idx]
-        end_chrom = self.chrom_all[end_idx-1] # inclusive here
+        # exclude regions
+        self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
 
-        if start_chrom != end_chrom:
-            #print("bad chrom", start_chrom, end_chrom)
-            if start_idx is None:
-                return self.real_region(neg1, region_len) # try again
-            else:
-                if iterative:
-                    return None # no recursion if walking through the genome
-                return self.real_region(neg1, region_len)
-                
-        hap_data = self.haps_all[start_idx:end_idx, :]
-        start_base = self.pos_all[start_idx]
-        end_base = self.pos_all[end_idx]
-        positions = self.pos_all[start_idx:end_idx]
+    def excess_overlap(self, chrom, start, end, region_len):
+        """
+        Given an interval, figure out how much it overlaps an exclude region
+        (if at all). If it overlaps the exclude region by more than 50% of its
+        length, ditch the interval.
+        """
+        total_bp_overlap = 0
 
-        chrom = global_vars.parse_chrom(start_chrom)
-        region = Region(chrom, start_base, end_base)
-        result = region.inside_mask(self.mask_dict)
+        overlaps = self.exclude_tree[chrom].find(start, end)
+        for inter in overlaps:
+            total_bp_overlap += inter.end - inter.start
+        
+        overlap_pct = total_bp_overlap / region_len
+        if overlap_pct > 0.5: return True
+        else: return False
+
+    def real_region(self, neg1, region_len, start_pos=None):
+
+        # first, choose a random chromosome. we'll randomly sample the chromosome
+        # names, weighted by their overall lengths.
+        chromosomes, lengths = self.sequence_lengths.items()
+        lengths_arr = np.array(lengths)
+        lengths_probs = lengths_arr / np.sum(lengths_arr)
+
+        chromosome = self.rng.choice(chromosomes, size=1, p=lengths_probs)
+        chromosome_len = self.sequence_lengths[chromosome]
+
+        if start_pos is None:
+            # grab a random position on this chromosome, such that the position
+            # plus the desired region length doesn't exceed the length of the chromosome.
+            start_idx = self.rng.integers(0, chromosome_len - region_len)
+
+        end_pos = start_pos + region_len
+
+        # initialize a Region object for this interval
+        region = Region(chromosome, start_pos, end_pos)
+        # check if the region overlaps excluded regions by too much
+        excessive_overlap = region.excess_overlap(chromosome, start_pos, end_pos, region_len)
         
         # if we do have an accessible region
-        if result:
-            # if region_len, then positions_S is actually positions_len
-            dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
-                for j in range(len(positions)-1)]
+        if not excessive_overlap:
 
-            after = util.process_gt_dist(hap_data, dist_vec,
-                region_len=region_len, real=True, neg1=neg1)
-            return after
+            region = prep_real_region(self.vcf, chromosome, start_pos, end_pos, self.num_samples)
+           
+            fixed_region = util.process_region(region, neg1=neg1)
+            return fixed_region
 
-        # try again if not in accessible region
-        if start_idx is None:
-            return self.real_region(neg1, region_len) # try again
+        # try again recursively if not in accessible region
         else:
-            if iterative:
-                return None # no recursion if walking through the genome
             return self.real_region(neg1, region_len)
 
-    def real_batch(self, batch_size = global_vars.BATCH_SIZE, neg1=True, region_len=False):
-        """Use region_len=True for fixed region length, not by SNPs"""
+    def real_batch(self, region_len: int, batch_size = global_vars.BATCH_SIZE, neg1=True):
 
-        if not region_len:
-            regions = np.zeros((batch_size, self.num_samples,
-                global_vars.NUM_SNPS, 2), dtype=np.float32)
+        regions = np.zeros((batch_size, self.num_samples,
+            global_vars.NUM_SNPS, 2), dtype=np.int8)
 
-            for i in range(batch_size):
-                regions[i] = self.real_region(neg1, region_len)
+        for i in range(batch_size):
+            regions[i] = self.real_region(neg1, region_len)
 
-        else:
-            regions = []
-            for i in range(batch_size):
-                regions.append(self.real_region(neg1, region_len))
 
         return regions
-
-    def real_chrom(self, chrom, samples):
-        """Mostly used for msmc - gather all data for a given chrom int"""
-        start_idx = 0
-        for i in range(1, chrom):
-            start_idx += self.chrom_counts[i]
-        end_idx = start_idx + self.chrom_counts[chrom]
-        print(chrom, start_idx, end_idx)
-        positions = self.pos_all[start_idx:end_idx]
-
-        assert len(samples) == 2 # two populations
-        n = self.haps_all.shape[1]
-        half = n//2
-        pop1_data = self.haps_all[start_idx:end_idx, 0:samples[0]]
-        pop2_data = self.haps_all[start_idx:end_idx, half:half+samples[1]]
-        hap_data = np.concatenate((pop1_data, pop2_data), axis=1)
-        assert len(hap_data) == len(positions)
-
-        return hap_data.transpose(), positions
+    
 
 if __name__ == "__main__":
     # testing
