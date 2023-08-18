@@ -68,7 +68,7 @@ def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) ->
     revcomp = {"A": "T", "T": "A", "C": "G", "G": "C"}
     mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 
-    out_arr = np.zeros((end - start, n_haps, 6), dtype=np.int8)
+    out_arr = np.zeros((end - start, n_haps, 6), dtype=np.float32)
     called_positions = np.zeros(end - start, dtype=np.int8)
 
     region_str = f"{chrom}:{start}-{end}"
@@ -98,12 +98,12 @@ def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) ->
 
 class RealDataRandomIterator:
 
-    def __init__(self, vcf_fh, seed, bed_file=None, chrom_starts=False):
+    def __init__(self, vcf_fh: str, bed_file: str, seed: int):
         self.rng = default_rng(seed)
 
         vcf = VCF(vcf_fh)
         self.vcf_ = vcf
-        self.num_samples = len(vcf.samples) * 2
+        self.num_haplotypes = len(vcf.samples) * 2
 
         # map chromosome names to chromosome lengths
         seq2len = dict(zip(vcf.seqnames, vcf.seqlens))
@@ -186,7 +186,7 @@ class RealDataRandomIterator:
         excessive_overlap = self.excess_overlap(chromosome, start_pos, end_pos)
         # if we do have an accessible region
         if not excessive_overlap:
-            region = prep_real_region(self.vcf_, chromosome, start_pos, end_pos, self.num_samples)
+            region = prep_real_region(self.vcf_, chromosome, start_pos, end_pos, self.num_haplotypes)
             fixed_region = util.process_region(region, neg1=neg1)
             return fixed_region
 
@@ -202,18 +202,12 @@ class RealDataRandomIterator:
     ):
 
         regions = np.zeros(
-            (
-                batch_size,
-                self.num_samples,
-                global_vars.NUM_SNPS,
-                2,
-            ),
-            dtype=np.int8,
+            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
+            dtype=np.float32,
         )
 
         for i in range(batch_size):
             regions[i] = self.sample_real_region(neg1, region_len)
-
 
         return regions
 

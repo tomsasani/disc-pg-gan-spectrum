@@ -7,8 +7,8 @@ Date: 2/4/21
 # python imports
 import tensorflow as tf
 
-from tensorflow.keras.layers import Dense, Flatten, Conv1D, Conv2D, \
-    MaxPooling2D, AveragePooling1D, Dropout, Concatenate
+from tensorflow.keras.layers import (Dense, Flatten, Conv2D, \
+    MaxPooling2D, Dropout,)
 from tensorflow.keras import Model
 
 class OnePopModel(Model):
@@ -16,6 +16,8 @@ class OnePopModel(Model):
 
     def __init__(self, pop, saved_model=None):
         super(OnePopModel, self).__init__()
+
+        print (f"DISCRIMINATOR should be expecting {pop} haplotypes")
 
         if saved_model is None:
             # it is (1,5) for permutation invariance (shape is n X SNPs)

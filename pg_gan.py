@@ -26,8 +26,10 @@ print("NUM_BATCH", NUM_BATCH)
 
 # globals for data
 NUM_CLASSES = 2     # "real" vs "simulated"
-NUM_CHANNELS = 2    # SNPs and distances
+NUM_CHANNELS = 6    # counts of derived alleles corresponding to each mutation type
 print("NUM_SNPS", global_vars.NUM_SNPS)
+print("NUM_WINDOWS", global_vars.NUM_WINDOWS)
+
 print("L", global_vars.L)
 print("NUM_CLASSES", NUM_CLASSES)
 print("NUM_CHANNELS", NUM_CHANNELS)
@@ -35,33 +37,29 @@ print("NUM_CHANNELS", NUM_CHANNELS)
 def main():
     """Parse args and run simulated annealing"""
 
-    opts = util.parse_args()
-    print(opts)
+    args = util.parse_args()
 
     # set up seeds
-    if opts.seed != None:
-        np.random.seed(opts.seed)
-        tf.random.set_seed(opts.seed)
+    if args.seed != None:
+        np.random.seed(args.seed)
+        tf.random.set_seed(args.seed)
 
-    generator, iterator, parameters, sample_sizes = util.process_opts(opts)
-    #disc = discriminator.MultiPopModel(sample_sizes)
+    generator, iterator, parameters, sample_sizes = util.process_args(args)
     disc = get_discriminator(sample_sizes)
 
-    # grid search
-    if opts.grid:
-        print("Grid search not supported right now")
-        sys.exit()
-        #posterior, loss_lst = grid_search(disc, samples, simulator,
-        #    iterator, parameters, opts.seed)
-    # simulated annealing
-    else:
-        posterior, loss_lst = simulated_annealing(generator, disc,
-            iterator, parameters, opts.seed, toy=opts.toy)
-    
-    if opts.disc is not None:
-        tf.saved_model.save(disc, "saved_model/" + opts.disc)
+    posterior, loss_lst = simulated_annealing(
+        generator,
+        disc,
+        iterator,
+        parameters,
+        args.seed,
+        toy=args.toy,
+    )
+
+    if args.disc is not None:
+        tf.saved_model.save(disc, "saved_model/" + args.disc)
         print("discriminator saved")
-        
+
     print(posterior)
     print(loss_lst)
 
@@ -79,10 +77,13 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
     # find starting point through pre-training (update generator in method)
     if not toy:
         s_current = pg_gan.disc_pretraining(800)
+    # otherwise, if this is a "toy" example for testing, just run a single
+    # round of discriminator pretraining
     else:
         pg_gan.disc_pretraining(1) # for testing purposes
         s_current = [param.start() for param in pg_gan.parameters]
         pg_gan.generator.update_params(s_current)
+        print ("COMPLETED DISCRIMINATOR PRETRAINING")
 
     loss_curr = pg_gan.generator_loss(s_current)
     print("params, loss", s_current, loss_curr)
@@ -93,32 +94,27 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
     fake_acc_lst = []
 
     # simulated-annealing iterations
-    num_iter = NUM_ITER
-    # for toy example
-    if toy:
-        num_iter = 2
+    num_iter = 2 if toy else NUM_ITER
 
-    # main pg-gan loop
+    # main PG-GAN loop
+    # loop over the number of iterations
     for i in range(num_iter):
         print("\nITER", i)
         print("time", datetime.datetime.now().time())
         T = temperature(i, num_iter) # reduce width of proposal over time
-
         # propose 10 updates per param and pick the best one
         s_best = None
         loss_best = float('inf')
-        for k in range(len(parameters)): # trying all params!
+        # currently, trying all parameters!
+        for k in range(len(parameters)):
+            print (f"currently parameterizing {pg_gan.parameters[k]}")
             #k = random.choice(range(len(parameters))) # random param
-            for j in range(10): # trying 10
-
-                # can update all the parameters at once, or choose one at a time
-                #s_proposal = [parameters[k].proposal(s_current[k], T) for k in
-                #    range(len(parameters))]
+            # try 10 iterations of parameter value selection for each param
+            for _ in range(10):
                 s_proposal = [v for v in s_current] # copy
                 s_proposal[k] = parameters[k].proposal(s_current[k], T)
                 loss_proposal = pg_gan.generator_loss(s_proposal)
-
-                print(j, "proposal", s_proposal, loss_proposal)
+                #print(j, "proposal", s_proposal, loss_proposal)
                 if loss_proposal < loss_best: # minimizing loss
                     loss_best = loss_proposal
                     s_best = s_proposal
@@ -155,34 +151,6 @@ def temperature(i, num_iter):
     """Temperature controls the width of the proposal and acceptance prob."""
     return 1 - i/num_iter # start at 1, end at 0
 
-# not used right now
-"""
-def grid_search(model_type, samples, demo_file, simulator, iterator, parameters,
-    is_range, seed):
-
-    # can only do one param right now
-    assert len(parameters) == 1
-    param = parameters[0]
-
-    all_values = []
-    all_likelihood = []
-    for fake_value in np.linspace(param.min, param.max, num=30):
-        fake_params = [fake_value]
-        model = TrainingModel(model_type, samples, demo_file, simulator,
-            iterator, parameters, is_range, seed)
-
-        # train more for grid search
-        model.train(fake_params, NUM_BATCH*10, globals.BATCH_SIZE)
-        test_acc, conf_mat = model.test(fake_params, NUM_TEST)
-        like_curr = likelihood(test_acc)
-        print("params, test_acc, likelihood", fake_value, test_acc, like_curr)
-
-        all_values.append(fake_value)
-        all_likelihood.append(like_curr)
-
-    return all_values, all_likelihood
-"""
-
 ################################################################################
 # TRAINING
 ################################################################################
@@ -195,19 +163,29 @@ class PG_GAN:
         # set up generator and discriminator
         self.generator = generator
         self.discriminator = disc
-        self.iterator = iterator # for training data (real or simulated)
+        self.iterator = iterator
         self.parameters = parameters
 
         # this checks and prints the model (1 is for the batch size)
-        self.discriminator.build_graph((1, iterator.num_samples,
-            global_vars.NUM_SNPS, NUM_CHANNELS))
+        self.discriminator.build_graph((
+            1,
+            iterator.num_haplotypes,
+            global_vars.NUM_SNPS,
+            NUM_CHANNELS,
+        ))
         self.discriminator.summary()
 
-        self.cross_entropy =tf.keras.losses.BinaryCrossentropy(from_logits=True)
+        self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
         self.disc_optimizer = tf.keras.optimizers.Adam()
 
     def disc_pretraining(self, num_batches):
-        """Pre-train so discriminator has a chance to learn before generator"""
+        """
+        Pretrain the discriminator. We do this in order to give the discriminator
+        a bit of a "head-start," so that it starts off the main training step having
+        seen a number of real and simulated regions, and is already OK at discriminating
+        between the two. The pre-training will make it harder for the generator to fool
+        the discriminator in the early training epochs. (I think).
+        """
         s_best = []
         max_acc = 0
         k = 0 if num_batches > 1 else 9 # limit iterations for toy/testing
@@ -229,11 +207,20 @@ class PG_GAN:
         return s_best
 
     def train_sa(self, num_batches):
-        """Train using fake_values for the simulated data"""
+        """
+        Main training function. Comprises a single epoch with `num_batches`.
+        """
 
         for epoch in range(num_batches):
-
-            real_regions = self.iterator.real_batch(neg1 = True)
+            # sample a batch of real regions of the specified region_len
+            real_regions = self.iterator.real_batch(
+                neg1=True,
+                region_len=global_vars.L,
+            )
+            # perform a training step. in a single training step,
+            # we use the Generator to generate a set of corresponding
+            # fake regions. we then ask the Discriminator to predict the
+            # class labels for the real regions and the fake regions.
             real_acc, fake_acc, disc_loss = self.train_step(real_regions)
 
             if (epoch+1) % 100 == 0:
@@ -253,13 +240,41 @@ class PG_GAN:
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
+    
+    def train_step(self, real_regions):
+        """One mini-batch for the discriminator"""
+
+        with tf.GradientTape() as disc_tape:
+            # use current Generator params to create a set of fake
+            # regions that corresopnd to the `real_regions` input
+            generated_regions = self.generator.simulate_batch()
+            # predict class labels (fake or real) for the real regions
+            real_output = self.discriminator(real_regions, training=True)
+            # do the same for the fake/generated regions
+            fake_output = self.discriminator(generated_regions, training=True)
+            # measure the discriminator "loss," as well as separate measures of
+            # accuracy predicting labels for the real and fake regions
+            disc_loss, real_acc, fake_acc = self.discriminator_loss(
+                real_output, fake_output)
+
+        # gradient descent
+        gradients_of_discriminator = disc_tape.gradient(disc_loss,
+            self.discriminator.trainable_variables)
+        self.disc_optimizer.apply_gradients(zip(gradients_of_discriminator,
+            self.discriminator.trainable_variables))
+
+        return real_acc, fake_acc, disc_loss
+    
 
     def discriminator_loss(self, real_output, fake_output):
         """ Discriminator loss """
-        # accuracy
+        # measure accuracy of Discriminator's class label predictions
+        # on both the real and fake data
         real_acc = np.sum(real_output >= 0) # positive logit => pred 1
         fake_acc = np.sum(fake_output <  0) # negative logit => pred 0
 
+        # use binary cross-entropy to measure Discriminator loss on both the
+        # real and fake data
         real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
         fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
         total_loss = real_loss + fake_loss
@@ -272,40 +287,15 @@ class PG_GAN:
 
         return total_loss, real_acc, fake_acc
 
-    def train_step(self, real_regions):
-        """One mini-batch for the discriminator"""
-
-        with tf.GradientTape() as disc_tape:
-            # use current params
-            generated_regions = self.generator.simulate_batch()
-
-            real_output = self.discriminator(real_regions, training=True)
-            fake_output = self.discriminator(generated_regions, training=True)
-
-            disc_loss, real_acc, fake_acc = self.discriminator_loss(
-                real_output, fake_output)
-
-        # gradient descent
-        gradients_of_discriminator = disc_tape.gradient(disc_loss,
-            self.discriminator.trainable_variables)
-        self.disc_optimizer.apply_gradients(zip(gradients_of_discriminator,
-            self.discriminator.trainable_variables))
-
-        return real_acc, fake_acc, disc_loss
 
 ################################################################################
 # EXTRA UTILITIES
 ################################################################################
 
 def get_discriminator(sample_sizes):
-    num_pops = len(sample_sizes)
-    if num_pops == 1:
-        return discriminator.OnePopModel(sample_sizes[0])
-    if num_pops == 2:
-        return discriminator.TwoPopModel(sample_sizes[0], sample_sizes[1])
-    # else
-    return discriminator.ThreePopModel(sample_sizes[0], sample_sizes[1],
-        sample_sizes[2])
+    # for now, only considering one-populatoin models
+    assert len(sample_sizes) == 1
+    return discriminator.OnePopModel(sample_sizes[0])
 
 if __name__ == "__main__":
     main()

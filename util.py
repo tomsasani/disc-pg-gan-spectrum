@@ -6,7 +6,7 @@ Date: 9/27/22
 
 # python imports
 import numpy as np
-import optparse
+import argparse
 import sys
 
 # our imports
@@ -15,9 +15,60 @@ import global_vars
 import param_set
 import real_data_random
 import simulation
-# from slim_iterator import SlimIterator
 
-def parse_params(param_input, all_params):
+def process_region(X: np.ndarray, neg1: bool = True, from_vcf: bool = False) -> np.ndarray:
+    """
+    Process an array of shape (n_sites, n_haps, 6), which is produced
+    from either generated or real data. First, subset it to contain global_vars.NUM_SNPS
+    polymorphisms, and then calculate the sums of derived alleles on each haplotype in global_vars.N_WINDOWS
+    windows across the arrays. 
+    
+    Zero-pad if necessary.
+
+    Args:
+        X (np.ndarray): _description_
+
+    Returns:
+        np.ndarray: _description_
+    """
+
+    n_sites, n_haps = X.shape[:-1]
+
+    # figure out the half-way point (measured in numbers of sites)
+    # in the input array
+    mid = n_sites // 2
+
+    S = global_vars.NUM_SNPS
+
+    half_S = S // 2
+    other_half_S = half_S
+
+    # instantiate the new region, formatted as (n_haps, n_sites, 6)
+    region = np.zeros((n_haps, global_vars.NUM_SNPS, 6), dtype=np.float32)
+
+    # enough SNPs, take middle portion
+    if mid >= half_S:
+        middle_portion = X[mid - half_S:mid + other_half_S, :, :]
+        # compute sums of derived alleles on each haplotype for each mutation type
+        #middle_portion_sums = compute_haplotype_sums(middle_portion, window_size = global_vars.NUM_SNPS)
+        # transpose so that haplotypes (not sites) are in 0th dimension
+        #middle_portion_sums = np.transpose(middle_portion_sums, (1, 0, 2))
+        #print (middle_portion_sums.shape)
+        region[:, :, :] = np.transpose(middle_portion, (1, 0, 2))
+
+    else:
+        print("NOT ENOUGH SNPS", n_sites)
+
+        if n_sites % 2 == 1: other_half_S += 1
+        # use the complete genotype array
+        # but just add it to the center of the main array
+        region[:, half_S - mid:mid + other_half_S, :] = np.transpose(
+                   X, (1, 0, 2))
+
+    # convert anc/der alleles to -1, 1
+    return major_minor(region, neg1)
+
+def parse_params(param_input):
     """See which params were desired for inference"""
     param_strs = param_input.split(',')
     parameters = []
@@ -31,66 +82,20 @@ def parse_params(param_input, all_params):
 
     return parameters
 
-def filter_func(x, rate): # currently not used
-    """Keep non-singletons. If singleton, filter at given rate"""
-    # TODO since we haven't done major/minor yet, might want to add != n-1 too
-    if np.sum(x) != 1:
-        return True
-    return np.random.random() >= rate # keep (1-rate) of singletons
+def compute_haplotype_sums(X: np.ndarray, window_size: int) -> np.ndarray:
+    # NOTE: needs to be tested!
+    n_sites, n_haps, n_channels = X.shape
 
-# def process_gt_dist(gt_matrix, region_len=False, real=False,
-#     neg1=True):
-#     """
-#     Take in a genotype matrix and vector of inter-SNP distances. Return a 3D
-#     numpy array of the given n (haps) and S (SNPs) and 2 channels.
-#     Filter singletons at given rate if filter=True
-#     """
-#     og_snps = gt_matrix.shape[0]
+    windows = np.arange(0, n_sites, step=window_size)
+    window_starts, window_ends = windows[:-1], windows[1:]
 
-#     if (real and global_vars.FILTER_REAL_DATA) or (not real and
-#         global_vars.FILTER_SIMULATED):
-#         # mask
-#         singleton_mask = np.array([filter_func(row, global_vars.FILTER_RATE,
-#             gt_matrix.shape[1] - 1) for row in gt_matrix])
+    window_sums = np.zeros((window_starts.shape[0], n_haps, n_channels), dtype=np.float32)
+    for i, (s, e) in enumerate(zip(window_starts, window_ends)):
+        # get count of derived alleles in window
+        derived_sum = np.sum(X[s:e, :, :], axis=1)
+        window_sums[i, :, :] = derived_sum
+    return window_sums
 
-#         # reassign
-#         gt_matrix = gt_matrix[singleton_mask]
-
-#     num_SNPs = gt_matrix.shape[0] # SNPs x n
-#     S = gt_matrix.shape[1]
-#     assert S == global_vars.NUM_SAMPLES * 2
-
-#     # set up region
-#     region = np.zeros((S, global_vars.NUM_SNPS, 6), dtype=np.float32)
-
-#     mid = num_SNPs // 2
-#     half_S = S // 2
-#     if S % 2 == 1: # odd
-#         other_half_S = half_S + 1
-#     else:
-#         other_half_S = half_S
-
-#     # enough SNPs, take middle portion
-#     if mid >= half_S:
-#         minor = major_minor(
-#             gt_matrix[mid - half_S:mid + other_half_S, :].transpose(),
-#             neg1,
-#         )
-#         region[:,:,0] = minor
-#         distances = np.vstack([np.copy(dist_vec[mid-half_S:mid+other_half_S])
-#             for k in range(n)])
-#         region[:,:,1] = distances
-
-#     # not enough SNPs, need to center-pad
-#     else:
-#         # print("NOT ENOUGH SNPS", num_SNPs)
-#         # print(num_SNPs, S, mid, half_S)
-#         minor = major_minor(gt_matrix.transpose(), neg1)
-#         region[:,half_S-mid:half_S-mid+num_SNPs,0] = minor
-#         distances = np.vstack([np.copy(dist_vec) for k in range(n)])
-#         region[:,half_S-mid:half_S-mid+num_SNPs,1] = distances
-
-#     return region # n X SNPs X 2
 
 def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
@@ -122,246 +127,101 @@ def filter_nonseg(region):
     filter = np.logical_and(keep0, keep1)
     return filter
 
-def parse_args(in_file_data = None, param_values = None):
+def parse_args():
     """Parse command line arguments."""
-    parser = optparse.OptionParser(description='PG-GAN entry point')
 
-    parser.add_option('-m', '--model', type='string',help='exp, im, ooa2, ooa3')
-    parser.add_option('-p', '--params', type='string',
-        help='comma separated parameter list')
-    parser.add_option('-d', '--data_h5', type='string', help='real data file')
-    parser.add_option('-b', '--bed', type='string', help='bed file (mask)')
-    parser.add_option('-r', '--reco_folder', type='string',
-        help='recombination maps')
-    parser.add_option('-g', action="store_true", dest="grid",help='grid search')
-    parser.add_option('-t', action="store_true", dest="toy", help='toy example')
-    parser.add_option('-s', '--seed', type='int', default=1833,
-        help='seed for RNG')
-    parser.add_option('-n', '--sample_size', type='int',
-        help='total sample size (assumes equal pop sizes)')
-    parser.add_option('-v', '--param_values', type='string',
-        help='comma separated values corresponding to params')
-    parser.add_option('--SLiM', type='string', dest='slim',
-        help='Use SLiM iterator constructed with files on list')
-    parser.add_option('--disc', type='string', dest='disc',
-        help='location to store discriminator')
+    p = argparse.ArgumentParser()
 
-    (opts, args) = parser.parse_args()
+    p.add_argument(
+        '--data_vcf',
+        type=str,
+        help='real data file in VCF format',
+        required=True,
+    )
+    p.add_argument(
+        '--bed',
+        type=str,
+        help='bed file (mask)',
+        required=True,
+    )
+    p.add_argument(
+        '--disc',
+        type=str,
+        dest='disc',
+        help='location to store discriminator',
+    )
+    p.add_argument(
+        '-params',
+        type=str,
+        help='comma separated parameter list',
+        default="N1,N2,T1,T2,rho,mu,growth,kappa,conversion,conversion_length"
+    )
+    p.add_argument(
+        '-reco_folder',
+        type=str,
+        help='recombination maps',
+    )
+    p.add_argument(
+        '-toy',
+        action="store_true",
+        help='toy example',
+    )
+    p.add_argument(
+        '-seed',
+        type=int,
+        default=1833,
+        help='seed for RNG',
+    )
 
-    '''
-    The following section overrides params from the input file with the provided
-    args.
-    '''
+    args = p.parse_args()
 
-    # note: this series of checks looks like it could be simplified with list
-    #       iteration:
-    # it can't be, bc the opts object can't be indexed--eg opts['model'] fails
-    def param_mismatch(param, og, replacement):
-        print("***** WARNING: MISMATCH BETWEEN IN FILE AND CMD ARGS: " + param +
-              ", using ARGS (" + str(og) + " -> " + str(replacement) + ")")
+    return args
 
-    if in_file_data is not None:
-        if opts.model is None:
-            opts.model = in_file_data['model']
-        elif opts.model != in_file_data['model']:
-            param_mismatch("MODEL", in_file_data['model'], opts.model)
 
-        if opts.params is None:
-            opts.params = in_file_data['params']
-        elif opts.params != in_file_data['params']:
-            param_mismatch("PARAMS", in_file_data['params'], opts.params)
-
-        if opts.data_h5 is None:
-            opts.data_h5 = in_file_data['data_h5']
-        elif opts.data_h5 != in_file_data['data_h5']:
-            param_mismatch("DATA_H5", in_file_data['data_h5'], opts.data_h5)
-
-        if opts.bed is None:
-            opts.bed = in_file_data['bed_file']
-        elif opts.bed != in_file_data['bed_file']:
-            param_mismatch("BED FILE", in_file_data['bed_file'], opts.bed)
-
-        if opts.reco_folder is None:
-            opts.reco_folder = in_file_data['reco_folder']
-        elif opts.reco_folder != in_file_data['reco_folder']:
-            param_mismatch("RECO_FOLDER", in_file_data['reco_folder'],
-                opts.reco_folder)
-
-    if opts.param_values is not None:
-        arg_values = [float(val_str) for val_str in
-            opts.param_values.split(',')]
-        if arg_values != param_values:
-            param_mismatch("PARAM_VALUES", param_values, arg_values)
-            param_values = arg_values # override at return
-
-    mandatories = ['model','params']
-    for m in mandatories:
-        if not opts.__dict__[m]:
-            print('mandatory option ' + m + ' is missing\n')
-            parser.print_help()
-            sys.exit()
-
-    if param_values is None:
-        return opts
-
-    return opts, param_values
-
-def parse_hapmap_empirical_prior(files):
-    """
-    Parse recombination maps to create a distribution of recombintion rates to
-    use for real data simulations. Based on defiNETti software package.
-    """
-    print("Parsing HapMap recombination rates...")
-
-    # set up weights (probabilities) and reco rates
-    weights_all = []
-    prior_rates_all = []
-
-    for f in files:
-        mat = np.loadtxt(f, skiprows = 1, usecols=(1,2))
-        #print(mat.shape)
-        mat[:,1] = mat[:,1]*(1.e-8)
-        mat = mat[mat[:,1] != 0.0, :] # remove 0s
-        weights = mat[1:,0] - mat[:-1,0]
-        prior_rates = mat[:-1,1]
-
-        weights_all.extend(weights)
-        prior_rates_all.extend(prior_rates)
-
-    # normalize
-    prob = weights_all / np.sum(weights_all)
-
-    # make smaller by a factor of 50 (collapse)
-    indexes = list(range(len(prior_rates_all)))
-    indexes.sort(key=prior_rates_all.__getitem__)
-
-    prior_rates_all = [prior_rates_all[i] for i in indexes]
-    prob = [prob[i] for i in indexes]
-
-    new_rates = []
-    new_weights = []
-
-    collapse = 50
-    for i in range(0,len(prior_rates_all),collapse):
-        end = collapse
-        if len(prior_rates_all)-i < collapse:
-            end = len(prior_rates_all)-i
-        new_rates.append(sum(prior_rates_all[i:i+end])/end) # average
-        new_weights.append(sum(prob[i:i+end])) # sum
-
-    new_rates = np.array(new_rates)
-    new_weights = np.array(new_weights)
-
-    return new_rates, new_weights
-
-def read_demo_file(filename, Ne):
-    """Read in a PSMC-like demography"""
-    demos = []
-    with open(filename, 'r') as demo_file:
-        for pop_params in demo_file:
-            time, pop = pop_params.strip().split()
-            demos.append(msprime.PopulationParametersChange(time=float(time)
-                * 4 * Ne, initial_size=float(pop) * Ne))
-    return demos
-
-def process_opts(opts, summary_stats = False):
-
-    if 'reco' in opts.params and opts.reco_folder is not None:
-        print('Recombination rate cannot be inferred and read from files. Please select one and try again. Exiting.')
-        sys.exit()
+def process_args(args, summary_stats = False):
 
     # parameter defaults
     all_params = param_set.ParamSet()
-    parameters = parse_params(opts.params, all_params) # desired params
+    parameters = parse_params(args.params) # desired params
     param_names = [p.name for p in parameters]
 
     real = False
-    ss_total = global_vars.DEFAULT_SAMPLE_SIZE
-    # if real data provided
-    if opts.data_h5 is not None: # h5 is None option at end of func
-        real = True
-        iterator = real_data_random.RealDataRandomIterator(filename=opts.data_h5,
-                                                           seed=opts.seed,
-                                                           bed_file=opts.bed)
-        ss_total = iterator.num_samples
+    #ss_total = global_vars.DEFAULT_SAMPLE_SIZE
 
-    # # parse model and simulator
-    # if opts.model == 'const':
-    #     num_pops = 1
-    #     simulator = simulation.simulate_const
+    # initialize the Iterator object, which will iterate over
+    # the VCF and grab regions of the size specified in global_vars.L
+    iterator = real_data_random.RealDataRandomIterator(
+        vcf_fh=args.data_vcf,
+        bed_file=args.bed,
+        seed=args.seed,
+    )
+    # figure out how many haplotypes are being sampled by the Iterator from the VCF
+    h_total = iterator.num_haplotypes
 
-    # # exp growth
-    # elif opts.model == 'exp':
+    print (f"ITERATOR is using {h_total} haplotypes")
+
+    # always using the EXP model, with a single population
     num_pops = 1
     simulator = simulation.simulate_exp
-
-    # # isolation-with-migration model (2 populations)
-    # elif opts.model == 'im':
-    #     num_pops = 2
-    #     simulator = simulation.simulate_im
-
-    # # out-of-Africa model (2 populations)
-    # elif opts.model in ['ooa2', 'fsc']:
-    #     num_pops = 2
-    #     simulator = simulation.simulate_ooa2
-
-    # # MSMC
-    # # elif opts.model == 'msmc':
-    # #     print("\nALERT you are running MSMC sim!\n")
-    # #     sample_sizes = get_sample_sizes(sample_size_total, 2)
-    # #     simulator = simulate_py_from_MSMC_IM.simulate_msmc
-
-    # # CEU/CHB (2 populations)
-    # elif opts.model == 'post_ooa':
-    #     num_pops = 2
-    #     simulator = simulation.simulate_postOOA
-
-    # # out-of-Africa model (3 populations)
-    # elif opts.model == 'ooa3':
-    #     num_pops = 3
-    #     simulator = simulation.simulate_ooa3
-
-    # # no other options
-    # else:
-    #     sys.exit(opts.model + " is not recognized")
 
     if (global_vars.FILTER_SIMULATED or global_vars.FILTER_REAL_DATA):
         print("FILTERING SINGLETONS")
 
-    # generator
-    sample_size_total = ss_total if opts.sample_size is None else opts.sample_size
-    sample_sizes = [sample_size_total//num_pops for i in range(num_pops)]
+    # figure out how many haplotypes the Generator object should be simulating in each batch
+    # we want this to match the number of haplotypes being sampled in the VCF
+    #sample_size_total = ss_total if args.sample_size is None else args.sample_size
+    sample_sizes = [h_total // num_pops for _ in range(num_pops)]
 
+    print (f"GENERATOR is simulating {sample_sizes[0]} haplotypes")
 
-    # if real and opts.slim:
-    #      gen = SlimIterator(opts.slim)
-    #      print("using slim generator")
-    # else:
     gen = generator.Generator(
         simulator,
         param_names,
-        #sample_sizes,
-        opts.seed,
-        mirror_real=real,
-        reco_folder=opts.reco_folder,
+        sample_sizes,
+        args.seed,
     )
 
-    if opts.data_h5 == None:
-
-        # if opts.slim is not None:
-        #     print("using slim iterator :)")
-        #     iterator = SlimIterator(opts.slim)
-
-        # else:
-        # "real data" is simulated with fixed params
-        iterator = generator.Generator(
-            simulator,
-            param_names,
-            #sample_sizes,
-            opts.seed,
-        )  # don't need reco_folder
-
-    return gen, iterator, parameters#, sample_sizes
+    return gen, iterator, parameters, sample_sizes
 
 if __name__ == "__main__":
     # test major/minor and post-processing

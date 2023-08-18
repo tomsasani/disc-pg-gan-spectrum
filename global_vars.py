@@ -1,8 +1,10 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-NUM_SNPS = 36       # number of seg sites, should be divisible by 4
+NUM_SNPS = 36 * 6       # number of seg sites, should be divisible by 4
 L = 50_000           # heuristic to get enough SNPs for simulations (50,000 or fifty-thousand)
 BATCH_SIZE = 50
+NUM_WINDOWS = 100 # number of windows in which to sum mutations
+NUM_HAPS = 50
 
 DEFAULT_SEED = 1833
 DEFAULT_SAMPLE_SIZE = 198

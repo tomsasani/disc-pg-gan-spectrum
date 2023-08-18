@@ -53,7 +53,6 @@ class Parameter:
     def proposal(self, curr_value, multiplier):
         if multiplier <= 0: # last iter
             return curr_value
-
         # normal around current value (make sure we don't go outside bounds)
         new_value = norm(curr_value, self.proposal_width * multiplier).rvs()
         new_value = self.fit_to_range(new_value)
@@ -76,7 +75,7 @@ class ParamSet:
 
     def __init__(self):
 
-        # starting population size
+        # population sizes and bottleneck times
         self.N1 = Parameter(9000, 1000, 30000, "N1")
         self.N2 = Parameter(5000, 1000, 30000, "N2")
         self.T1 = Parameter(2000, 1500, 5000, "T1")
@@ -90,6 +89,11 @@ class ParamSet:
         # ratio of transitions to transversions (used to paramterize
         # the felsenstein 84 mutation model in msprime)
         self.kappa = Parameter(2.0, 0.1, 5.0, "kappa")
+        # gene conversion rate
+        self.conversion = Parameter(5e-8, 5e-9, 5e-6, "conversion")
+        # gene conversion track length
+        self.conversion_length = Parameter(2, 10, 1, "conversion_length")
+
 
     def update(self, names, values):
         """Based on generator proposal, update desired param values"""
