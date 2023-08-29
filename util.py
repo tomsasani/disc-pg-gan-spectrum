@@ -28,10 +28,8 @@ def sum_across_windows(X: np.ndarray) -> np.ndarray:
         # get count of derived alleles in window
         derived_sum = np.nansum(X[:, s:e, :], axis=1)
         channel_maxes = np.max(derived_sum, axis=0)
-        print (derived_sum)
         derived_sum_rescaled = derived_sum / channel_maxes.reshape(1, -1)
         derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
-        print (derived_sum_rescaled)
         rel_regions_sum[:, i, :] = derived_sum_rescaled
     return rel_regions_sum
 
