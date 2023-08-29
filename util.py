@@ -24,16 +24,14 @@ def sum_across_windows(X: np.ndarray) -> np.ndarray:
     window_starts, window_ends = windows[:-1], windows[1:]
 
     rel_regions_sum = np.zeros((n_haps, window_starts.shape[0], n_channels))
-    #print (windows.shape)
     for i, (s, e) in enumerate(zip(window_starts, window_ends)):
         # get count of derived alleles in window
         derived_sum = np.nansum(X[:, s:e, :], axis=1)
-        #print (i, derived_sum, derived_sum.shape)
         channel_maxes = np.max(derived_sum, axis=0)
-        #print (channel_maxes, channel_maxes.shape)
+        print (derived_sum)
         derived_sum_rescaled = derived_sum / channel_maxes.reshape(1, -1)
         derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
-        #print (derived_sum_rescaled)
+        print (derived_sum_rescaled)
         rel_regions_sum[:, i, :] = derived_sum_rescaled
     return rel_regions_sum
 
