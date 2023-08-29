@@ -88,7 +88,7 @@ class ParamSet:
         self.growth = Parameter(0.01, 0.0, 0.05, "growth")
         # ratio of transitions to transversions (used to paramterize
         # the felsenstein 84 mutation model in msprime)
-        self.kappa = Parameter(2.0, 1.0, 5.0, "kappa")
+        self.kappa = Parameter(2.0, 0.1, 3.0, "kappa")
         # gene conversion rate
         self.conversion = Parameter(5e-8, 5e-9, 5e-6, "conversion")
         # gene conversion track length

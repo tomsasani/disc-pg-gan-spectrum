@@ -1,8 +1,10 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-NUM_SNPS = 36 * 6       # number of seg sites, should be divisible by 4
+NUM_WINDOWS = 36
+WINDOW_SIZE = 10
+NUM_SNPS = NUM_WINDOWS * WINDOW_SIZE       # number of seg sites, should be divisible by 4
 L = 100_000           # heuristic to get enough SNPs for simulations (50,000 or fifty-thousand)
-BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
+BATCH_SIZE = 20 # number of real/simulated regions to sample in a given batch
 
 DEFAULT_SEED = 1833
 DEFAULT_SAMPLE_SIZE = 198

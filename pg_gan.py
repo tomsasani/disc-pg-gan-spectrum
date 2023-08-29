@@ -13,6 +13,7 @@ import scipy.stats
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import tqdm
 
 # our imports
 import discriminator
@@ -21,7 +22,7 @@ import util
 from real_data_random import Region
 
 # globals for simulated annealing
-NUM_ITER = 300
+NUM_ITER = 150
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -78,15 +79,19 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     # find starting point through pre-training (update generator in method)
     if not toy:
-        s_current = pg_gan.disc_pretraining(800)
+        s_current = pg_gan.disc_pretraining(100) # 800
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
-        pg_gan.disc_pretraining(50) # for testing purposes
+        pg_gan.disc_pretraining(1) # for testing purposes
         s_current = [param.start() for param in pg_gan.parameters]
         pg_gan.generator.update_params(s_current)
         print ("COMPLETED DISCRIMINATOR PRETRAINING")
 
+    # after discriminator pre-training, figure out our Generator loss.
+    # specifically, generate a bunch of fake data using whatever the current
+    # parameter values are, and figure out how good the Discriminator is at
+    # figuring out that it's all fake.
     loss_curr = pg_gan.generator_loss(s_current)
     print("params, loss", s_current, loss_curr)
 
@@ -98,7 +103,6 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     out_df = []
     # main PG-GAN loop
-    # loop over the number of iterations
     for i in range(num_iter):
         print("\nITER", i)
         print("time", datetime.datetime.now().time())
@@ -108,36 +112,50 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         loss_best = float('inf')
         # currently, trying all parameters!
         for k in range(len(parameters)):
-            print (f"currently parameterizing {parameters[k]}")
             # try 10 iterations of parameter value selection for each param
             for _ in range(10):
-                s_proposal = [v for v in s_current] # copy
+                s_proposal = [v for v in s_current]
                 s_proposal[k] = parameters[k].proposal(s_current[k], T)
+                # for each parameter value, figure out the Generator loss.
+                # that is, using the proposed parameter values, generate some fake
+                # data (with no real data paired alongside it at all) and see how 
+                # good our discriminator is at telling that it's fake.
                 loss_proposal = pg_gan.generator_loss(s_proposal)
+                # if our Generator's loss is better than the best so far *in this iteration*, use these
+                # new parameter values as the parameters for retraining
                 if loss_proposal < loss_best: # minimizing loss
                     loss_best = loss_proposal
                     s_best = s_proposal
 
-        # decide whether to accept or not (reduce accepting bad state later on)
-        if loss_best <= loss_curr: # unsure about this equal here
+        # figure out whether the Generator loss in this iteration is better than the best
+        # loss observed so far *in any iteration*. if it is, set the "probability that we
+        # should accept this set of parameters for the Generator" to be 1.
+        if loss_best <= loss_curr: 
             p_accept = 1
+        # otherwise, set the "probability that we should accept this set of parameters for the Generator"
+        # to be a float that captures the degree to which the current loss compares to the best loss. basically,
+        # the worse this iteration looks compared to previous iterations, the lower this probability should be.
         else:
             p_accept = (loss_curr / loss_best) * T
+        # draw a random float from a uniform dist [0, 1). if the float is less than the "probability" defined
+        # above, we'll accept the current set of parameters.
         rand = np.random.rand()
         accept = rand < p_accept
 
-        # if accept, retrain
+        # if we accept the current set of parameters, let's retrain our model!
         if accept:
             for pi, p in enumerate(parameters):
-                out_df.append({"epoch": i, "param": p.name, "param_value": s_best[pi]})
+                out_df.append({"epoch": i, "param": p.name, "generator_loss": loss_best, "param_value": s_best[pi]})
             print("ACCEPTED")
             s_current = s_best
+            # NOTE: should this be pg_gan.generator.update_params() ?
+            # update the parameters of the Generator to reflect the best set of parameters in the iteration.
             generator.update_params(s_current)
-            # train only if accept
             real_acc, fake_acc = pg_gan.train_sa(NUM_BATCH)
             loss_curr = loss_best
 
-        # don't retrain
+        # if we shouldn't accept the current set of parameters for the Generator, move on to the
+        # next iteration.
         else:
             print("NOT ACCEPTED")
 
@@ -147,7 +165,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         loss_lst.append(loss_curr)
 
     out_df = pd.DataFrame(out_df)
-    print (out_df)
+    out_df.to_csv("summary.csv")
     g = sns.FacetGrid(data=out_df, row="param", sharey=False, sharex=True, height=3, aspect=4)
     g.map(sns.lineplot, "epoch", "param_value")
     g.savefig("params.png", dpi=200)
@@ -177,13 +195,13 @@ class PG_GAN:
         self.discriminator.build_graph((
             1,
             iterator.num_haplotypes,
-            global_vars.NUM_SNPS,
+            global_vars.NUM_WINDOWS - 1,
             NUM_CHANNELS,
         ))
         self.discriminator.summary()
 
         self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        self.disc_optimizer = tf.keras.optimizers.Adam()
+        self.disc_optimizer = tf.keras.optimizers.legacy.Adam()
 
     def disc_pretraining(self, num_batches: int):
         """
@@ -223,7 +241,7 @@ class PG_GAN:
         Main training function. Comprises a single epoch with `num_batches`.
         """
 
-        for epoch in range(num_batches):
+        for epoch in tqdm.tqdm(range(num_batches)):
             # sample a batch of real regions of the specified region_len
             real_regions, real_root_dists = self.iterator.real_batch(
                 neg1=True,
@@ -235,6 +253,7 @@ class PG_GAN:
             # class labels for the real regions and the fake regions.
             real_acc, fake_acc, disc_loss = self.train_step(real_regions, real_root_dists)
 
+            # every 100th epoch, print the accuracy
             if (epoch+1) % 100 == 0:
                 template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
                 print(
@@ -252,7 +271,11 @@ class PG_GAN:
 
     def generator_loss(self, proposed_params):
         """ Generator loss """
-        generated_regions = self.generator.simulate_batch(params=proposed_params)
+        # NOTE: we provide a static root distribution of nucleotides when measuring
+        # the generator loss here.
+        root_dists = np.array([0.25, 0.25, 0.25, 0.25])
+        root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
+        generated_regions = self.generator.simulate_batch(root_dists_tiled, params=proposed_params)
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)

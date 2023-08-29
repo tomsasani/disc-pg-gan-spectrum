@@ -61,7 +61,7 @@ class Generator:
 
         # initialize matrix in which to store data
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
+            (batch_size, self.num_haplotypes, global_vars.NUM_WINDOWS - 1, 6),
             dtype=np.float32)
 
         # set up parameters
@@ -81,6 +81,7 @@ class Generator:
             # NOTE: the simulator simulates numbers of *samples* rather
             # than haplotypes, so we need to divide the sample sizes by 2
             # to get the correct number of haplotypes.
+            #print (i, root_dists[i])
             ts = self.simulator(
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],

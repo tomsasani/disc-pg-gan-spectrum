@@ -254,7 +254,7 @@ class RealDataRandomIterator:
 
         # store the actual haplotype "images" in each batch within this region
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
+            (batch_size, self.num_haplotypes, global_vars.NUM_WINDOWS - 1, 6),
             dtype=np.float32,
         )
 

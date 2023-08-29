@@ -16,6 +16,27 @@ import param_set
 import real_data_random
 import simulation
 
+def sum_across_windows(X: np.ndarray) -> np.ndarray:
+
+    n_haps, n_sites, n_channels = X.shape
+    window_size = global_vars.WINDOW_SIZE
+    windows = np.arange(0, global_vars.NUM_SNPS, step=window_size)
+    window_starts, window_ends = windows[:-1], windows[1:]
+
+    rel_regions_sum = np.zeros((n_haps, window_starts.shape[0], n_channels))
+    #print (windows.shape)
+    for i, (s, e) in enumerate(zip(window_starts, window_ends)):
+        # get count of derived alleles in window
+        derived_sum = np.nansum(X[:, s:e, :], axis=1)
+        #print (i, derived_sum, derived_sum.shape)
+        channel_maxes = np.max(derived_sum, axis=0)
+        #print (channel_maxes, channel_maxes.shape)
+        derived_sum_rescaled = derived_sum / channel_maxes.reshape(1, -1)
+        derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
+        #print (derived_sum_rescaled)
+        rel_regions_sum[:, i, :] = derived_sum_rescaled
+    return rel_regions_sum
+
 def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
@@ -63,9 +84,11 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
         # but just add it to the center of the main array
         region[:, half_S - mid:mid + other_half_S, :] = np.transpose(
                    X, (1, 0, 2))
-
+    #print (region)
+    #print (sum_across_windows(region))
     # convert anc/der alleles to -1, 1
-    return major_minor(region, neg1)
+    return sum_across_windows(region)
+    #return major_minor(region, neg1)
 
 def parse_params(param_input):
     """See which params were desired for inference"""
@@ -80,20 +103,6 @@ def parse_params(param_input):
         print(p)
 
     return parameters
-
-def compute_haplotype_sums(X: np.ndarray, window_size: int) -> np.ndarray:
-    # NOTE: needs to be tested!
-    n_sites, n_haps, n_channels = X.shape
-
-    windows = np.arange(0, n_sites, step=window_size)
-    window_starts, window_ends = windows[:-1], windows[1:]
-
-    window_sums = np.zeros((window_starts.shape[0], n_haps, n_channels), dtype=np.float32)
-    for i, (s, e) in enumerate(zip(window_starts, window_ends)):
-        # get count of derived alleles in window
-        derived_sum = np.sum(X[s:e, :, :], axis=1)
-        window_sums[i, :, :] = derived_sum
-    return window_sums
 
 
 def major_minor(matrix, neg1):

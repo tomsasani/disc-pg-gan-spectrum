@@ -66,11 +66,10 @@ def simulate_exp(params, sample_sizes, root_distribution, seed):
     #     recombination_rate=params.rho.value,
     #     random_seed=seed,
     # )
-
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        model=msprime.F84(root_distribution=root_distribution, kappa=params.kappa.value),
+        model=msprime.HKY(root_distribution=root_distribution, kappa=params.kappa.value),
         random_seed=seed,
         discrete_genome=True,
     )
