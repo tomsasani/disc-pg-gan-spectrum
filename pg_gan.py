@@ -10,6 +10,9 @@ import numpy as np
 import sys
 import tensorflow as tf
 import scipy.stats
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 # our imports
 import discriminator
@@ -28,7 +31,6 @@ print("NUM_BATCH", NUM_BATCH)
 NUM_CLASSES = 2     # "real" vs "simulated"
 NUM_CHANNELS = 6    # counts of derived alleles corresponding to each mutation type
 print("NUM_SNPS", global_vars.NUM_SNPS)
-print("NUM_WINDOWS", global_vars.NUM_WINDOWS)
 
 print("L", global_vars.L)
 print("NUM_CLASSES", NUM_CLASSES)
@@ -80,7 +82,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
-        pg_gan.disc_pretraining(1) # for testing purposes
+        pg_gan.disc_pretraining(50) # for testing purposes
         s_current = [param.start() for param in pg_gan.parameters]
         pg_gan.generator.update_params(s_current)
         print ("COMPLETED DISCRIMINATOR PRETRAINING")
@@ -90,12 +92,11 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     posterior = [s_current]
     loss_lst = [loss_curr]
-    real_acc_lst = []
-    fake_acc_lst = []
 
     # simulated-annealing iterations
-    num_iter = 2 if toy else NUM_ITER
+    num_iter = 5 if toy else NUM_ITER
 
+    out_df = []
     # main PG-GAN loop
     # loop over the number of iterations
     for i in range(num_iter):
@@ -107,14 +108,12 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         loss_best = float('inf')
         # currently, trying all parameters!
         for k in range(len(parameters)):
-            print (f"currently parameterizing {pg_gan.parameters[k]}")
-            #k = random.choice(range(len(parameters))) # random param
+            print (f"currently parameterizing {parameters[k]}")
             # try 10 iterations of parameter value selection for each param
             for _ in range(10):
                 s_proposal = [v for v in s_current] # copy
                 s_proposal[k] = parameters[k].proposal(s_current[k], T)
                 loss_proposal = pg_gan.generator_loss(s_proposal)
-                #print(j, "proposal", s_proposal, loss_proposal)
                 if loss_proposal < loss_best: # minimizing loss
                     loss_best = loss_proposal
                     s_best = s_proposal
@@ -129,6 +128,8 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
         # if accept, retrain
         if accept:
+            for pi, p in enumerate(parameters):
+                out_df.append({"epoch": i, "param": p.name, "param_value": s_best[pi]})
             print("ACCEPTED")
             s_current = s_best
             generator.update_params(s_current)
@@ -144,6 +145,12 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         print(T, p_accept, rand, s_current, loss_curr)
         posterior.append(s_current)
         loss_lst.append(loss_curr)
+
+    out_df = pd.DataFrame(out_df)
+    print (out_df)
+    g = sns.FacetGrid(data=out_df, row="param", sharey=False, sharex=True, height=3, aspect=4)
+    g.map(sns.lineplot, "epoch", "param_value")
+    g.savefig("params.png", dpi=200)
 
     return posterior, loss_lst
 
@@ -178,20 +185,24 @@ class PG_GAN:
         self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
         self.disc_optimizer = tf.keras.optimizers.Adam()
 
-    def disc_pretraining(self, num_batches):
+    def disc_pretraining(self, num_batches: int):
         """
         Pretrain the discriminator. We do this in order to give the discriminator
         a bit of a "head-start," so that it starts off the main training step having
         seen a number of real and simulated regions, and is already OK at discriminating
         between the two. The pre-training will make it harder for the generator to fool
-        the discriminator in the early training epochs. (I think).
+        the discriminator in the early training epochs. (I think). This is also
+        because our focus is one the discriminator at the end of the day.
+
+        NOTE: in each epoch of the discriminator pretraining, we simply choose random
+        values of each parameter. we're not updating parameters using simulated annealing.
         """
         s_best = []
         max_acc = 0
         k = 0 if num_batches > 1 else 9 # limit iterations for toy/testing
 
-        # try with several random sets at first
         while max_acc < 0.9 and k < 10:
+            # choose a completely random value for each of the tweakable parameters
             s_trial = [param.start() for param in self.parameters]
             print("trial", k+1, s_trial)
             self.generator.update_params(s_trial)
@@ -202,18 +213,19 @@ class PG_GAN:
                 s_best = s_trial
             k += 1
 
-        # now start!
+        # once pretraining is complete, update the parameter values to be
+        # the "best" set of random parameters that we explored during pretraining
         self.generator.update_params(s_best)
         return s_best
 
-    def train_sa(self, num_batches):
+    def train_sa(self, num_batches: int):
         """
         Main training function. Comprises a single epoch with `num_batches`.
         """
 
         for epoch in range(num_batches):
             # sample a batch of real regions of the specified region_len
-            real_regions = self.iterator.real_batch(
+            real_regions, real_root_dists = self.iterator.real_batch(
                 neg1=True,
                 region_len=global_vars.L,
             )
@@ -221,16 +233,22 @@ class PG_GAN:
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
-            real_acc, fake_acc, disc_loss = self.train_step(real_regions)
+            real_acc, fake_acc, disc_loss = self.train_step(real_regions, real_root_dists)
 
             if (epoch+1) % 100 == 0:
                 template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
-                print(template.format(epoch + 1,
-                                disc_loss,
-                                real_acc/global_vars.BATCH_SIZE * 100,
-                                fake_acc/global_vars.BATCH_SIZE * 100))
+                print(
+                    template.format(
+                        epoch + 1,
+                        disc_loss,
+                        real_acc / global_vars.BATCH_SIZE * 100,
+                        fake_acc / global_vars.BATCH_SIZE * 100,
+                    ))
 
-        return real_acc/global_vars.BATCH_SIZE, fake_acc/global_vars.BATCH_SIZE
+        return (
+            real_acc / global_vars.BATCH_SIZE,
+            fake_acc / global_vars.BATCH_SIZE,
+        )
 
     def generator_loss(self, proposed_params):
         """ Generator loss """
@@ -240,14 +258,14 @@ class PG_GAN:
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
-    
-    def train_step(self, real_regions):
+
+    def train_step(self, real_regions, real_root_dists):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
-            generated_regions = self.generator.simulate_batch()
+            generated_regions = self.generator.simulate_batch(real_root_dists)
             # predict class labels (fake or real) for the real regions
             real_output = self.discriminator(real_regions, training=True)
             # do the same for the fake/generated regions
@@ -264,7 +282,7 @@ class PG_GAN:
             self.discriminator.trainable_variables))
 
         return real_acc, fake_acc, disc_loss
-    
+
 
     def discriminator_loss(self, real_output, fake_output):
         """ Discriminator loss """
@@ -278,12 +296,6 @@ class PG_GAN:
         real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
         fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
         total_loss = real_loss + fake_loss
-
-        # add on entropy regularization (small penalty)
-        real_entropy = scipy.stats.entropy(tf.nn.sigmoid(real_output))
-        fake_entropy = scipy.stats.entropy(tf.nn.sigmoid(fake_output))
-        entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
-            fake_entropy)) # can I just use +,*? TODO experiement with constant
 
         return total_loss, real_acc, fake_acc
 

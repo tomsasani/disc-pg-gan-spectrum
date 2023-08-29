@@ -16,7 +16,7 @@ import param_set
 import real_data_random
 import simulation
 
-def process_region(X: np.ndarray, neg1: bool = True, from_vcf: bool = False) -> np.ndarray:
+def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
     from either generated or real data. First, subset it to contain global_vars.NUM_SNPS
@@ -57,8 +57,7 @@ def process_region(X: np.ndarray, neg1: bool = True, from_vcf: bool = False) -> 
         region[:, :, :] = np.transpose(middle_portion, (1, 0, 2))
 
     else:
-        print("NOT ENOUGH SNPS", n_sites)
-
+        #print("NOT ENOUGH SNPS", n_sites)
         if n_sites % 2 == 1: other_half_S += 1
         # use the complete genotype array
         # but just add it to the center of the main array
@@ -139,6 +138,12 @@ def parse_args():
         required=True,
     )
     p.add_argument(
+        '--ref',
+        type=str,
+        help="path to ancestral reference",
+        required=True,
+    )
+    p.add_argument(
         '--bed',
         type=str,
         help='bed file (mask)',
@@ -192,6 +197,7 @@ def process_args(args, summary_stats = False):
     # the VCF and grab regions of the size specified in global_vars.L
     iterator = real_data_random.RealDataRandomIterator(
         vcf_fh=args.data_vcf,
+        ref_fh=args.ref,
         bed_file=args.bed,
         seed=args.seed,
     )
@@ -241,4 +247,4 @@ if __name__ == "__main__":
     print(a)
     print(major_minor(a, neg1=True))
 
-    process_gt_dist(a, dist_vec, real=False)
+    process_region(a, dist_vec, real=False)

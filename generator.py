@@ -39,12 +39,26 @@ class Generator:
 
     def simulate_batch(
         self,
-        batch_size=global_vars.BATCH_SIZE,
-        params=[],
-        real=False,
-        neg1=True,
+        root_dists: np.ndarray,
+        batch_size: int = global_vars.BATCH_SIZE,
+        params = [],
+        real: bool = False,
+        neg1: bool = True,
     ):
-        
+        """Simulate a batch of Generated regions. 
+
+        Args:
+            root_dists (np.ndarray): Root distributions to use for parameterizing the Generator.
+                Should be a np.ndarray of shape (batch_size, 4).
+            batch_size (int, optional): Batch size. Defaults to global_vars.BATCH_SIZE.
+            params (list, optional): _description_. Defaults to [].
+            real (bool, optional): _description_. Defaults to False.
+            neg1 (bool, optional): _description_. Defaults to True.
+
+        Returns:
+            _type_: _description_
+        """
+
         # initialize matrix in which to store data
         regions = np.zeros(
             (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
@@ -70,6 +84,7 @@ class Generator:
             ts = self.simulator(
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],
+                root_dists[i],
                 seed,
             )
             # return 3D array
@@ -79,9 +94,14 @@ class Generator:
 
         return regions
 
-    def real_batch(self, batch_size = global_vars.BATCH_SIZE, neg1=True,
-        region_len=False):
-        return self.simulate_batch(batch_size=batch_size, real=True, neg1=neg1,
+    def real_batch(
+        self,
+        root_dists: np.ndarray,
+        batch_size=global_vars.BATCH_SIZE,
+        neg1=True,
+        region_len=False,
+    ):
+        return self.simulate_batch(root_dists, batch_size=batch_size, real=True, neg1=neg1,
             region_len=region_len)
 
     def update_params(self, new_params):
@@ -96,29 +116,26 @@ def prep_region(ts, neg1=False) -> np.ndarray:
     mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 
     n_sites, n_haps = ts.genotype_matrix().astype(np.float32).shape
-    # get middle NUM_SITES
-    if n_sites < global_vars.NUM_SNPS:
-        return None
-    else:
-        X = np.zeros((n_sites, n_haps, 6))
-        var_idx = 0
-        for var in ts.variants():
-            ref = var.alleles[0]
-            alts = var.alleles[1:]
-            pos, gts = int(var.site.position), var.genotypes
-            # if ref not in revcomp.keys():
-            #     continue
-            for alt_idx, alt in enumerate(alts):
-                haps_with_alt = np.where(gts == alt_idx + 1)[0]
-                if ref in ("G", "T"):
-                    ref, alt = revcomp[ref], revcomp[alt]
-                # TODO: deal with silent mutations
-                if ref == alt: continue
-                mutation = ">".join([ref, alt])
-                mutation_idx = mut2idx[mutation]
-                X[var_idx, haps_with_alt, mutation_idx] += 1
-            var_idx += 1
-        return X
+
+    X = np.zeros((n_sites, n_haps, 6))
+    var_idx = 0
+    for var in ts.variants():
+        ref = var.alleles[0]
+        alts = var.alleles[1:]
+        pos, gts = int(var.site.position), var.genotypes
+        # if ref not in revcomp.keys():
+        #     continue
+        for alt_idx, alt in enumerate(alts):
+            haps_with_alt = np.where(gts == alt_idx + 1)[0]
+            if ref in ("G", "T"):
+                ref, alt = revcomp[ref], revcomp[alt]
+            # TODO: deal with silent mutations
+            if ref == alt: continue
+            mutation = ">".join([ref, alt])
+            mutation_idx = mut2idx[mutation]
+            X[var_idx, haps_with_alt, mutation_idx] += 1
+        var_idx += 1
+    return X
 
 # testing
 if __name__ == "__main__":
@@ -131,6 +148,12 @@ if __name__ == "__main__":
     generator = Generator(simulation.simulate_exp, ["N1", "kappa", "conversion", "mu"], [20],
                           global_vars.DEFAULT_SEED)
     generator.update_params([params.N1.value, params.kappa.value, params.conversion.value, params.mu.value,])
-    mini_batch = generator.simulate_batch(batch_size=batch_size)
+
+    test_root_dists = np.tile(np.array([0.25, 0.25, 0.25, 0.25]), (batch_size, 1))
+
+    mini_batch = generator.simulate_batch(
+        test_root_dists,
+        batch_size=batch_size,
+    )
 
     print("x", mini_batch.shape)

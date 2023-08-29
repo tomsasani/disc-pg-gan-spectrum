@@ -17,6 +17,8 @@ import csv
 from collections import defaultdict
 from cyvcf2 import VCF
 import tqdm
+import mutyper
+from collections import Counter
 
 # our imports
 import global_vars
@@ -58,13 +60,12 @@ def read_exclude(fh: str) -> IntervalTree:
         for l in tqdm.tqdm(csvf):
             if l[0].startswith("#") or l[0] == "chrom": continue
             chrom, start, end = l
-            if chrom != "1": continue
             interval = Interval(int(start), int(end))
             tree[chrom].insert_interval(interval)
 
     return tree
 
-def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) -> np.ndarray:
+def prep_real_region(vcf: VCF, ancestor: mutyper.Ancestor, chrom: str, start: int, end: int, n_haps: int) -> np.ndarray:
     revcomp = {"A": "T", "T": "A", "C": "G", "G": "C"}
     mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 
@@ -83,8 +84,14 @@ def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) ->
         ref, alt = v.REF.upper(), v.ALT[0].upper()
         if ref in ("G", "T"):
             ref, alt = revcomp[ref], revcomp[alt]
-        mutation = ">".join([ref, alt])
-        mut_i = mut2idx[mutation]
+        # only include mutations that occur at a confidently polarized
+        # nucleotide in the ancestral reference genome.
+        # NOTE: we do this so that we only include mutations that occurred
+        # in the space of nucleotides described by the root distribution in
+        # the ancestral reference genome sequence.
+        mutation = ancestor.mutation_type(v.CHROM, v.end, ref, alt)
+        if None in mutation: continue
+        mut_i = mut2idx[">".join(mutation)]
 
         vi = v.start - start
         out_arr[vi, :, mut_i] = np.array(v.genotypes)[:, :-1].flatten()
@@ -95,15 +102,46 @@ def prep_real_region(vcf: VCF, chrom: str, start: int, end: int, n_haps: int) ->
     out_arr_sub = out_arr[np.where(called_positions)[0], :, :]
     return out_arr_sub
 
+def get_root_nucleotide_dist(ancestor: mutyper.Ancestor, chrom: str, start: int, end: int) -> np.ndarray:
+    """
+    Given an interval, figure out the frequency of each nucleotide within the
+    region using an ancestral reference genome sequence. This is important so that we
+    can parametrize the Generator such that mutations are simulated w/r/t an identical
+    starting nucleotide distribution.
+
+    Args:
+        chrom (str): Chromosome of query region.
+        start (int): Starting position of query region.
+        end (int): Ending position of query region.
+
+    Returns:
+        np.ndarray: 1-D numpy array containing frequencies of A,T,C and G nucs.
+    """
+    nuc_order = ["A", "C", "G", "T"]
+    sequence = str(ancestor[chrom][start:end].seq).upper()
+    counts = Counter(sequence)
+
+    root_dist = np.zeros(4)
+    for nuc_i, nuc in enumerate(nuc_order):
+        root_dist[nuc_i] = counts[nuc]
+    # NOTE: maybe don't do this in the future
+    if np.sum(root_dist) == 0:
+        return np.array([0.25, 0.25, 0.25, 0.25])
+    else: return root_dist / np.sum(root_dist)
+
 
 class RealDataRandomIterator:
 
-    def __init__(self, vcf_fh: str, bed_file: str, seed: int):
+    def __init__(self, vcf_fh: str, ref_fh: str, bed_file: str, seed: int):
         self.rng = default_rng(seed)
 
         vcf = VCF(vcf_fh)
         self.vcf_ = vcf
         self.num_haplotypes = len(vcf.samples) * 2
+
+        # read in ancestral sequence using mutyper
+        ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
+        self.ancestor = ancestor
 
         # map chromosome names to chromosome lengths
         seq2len = dict(zip(vcf.seqnames, vcf.seqlens))
@@ -143,7 +181,8 @@ class RealDataRandomIterator:
         self,
         neg1: bool,
         region_len: int,
-        start_pos: int =None,
+        start_pos: int = None,
+        autosomes_only: bool = True,
     ) -> np.ndarray:
         """Sample a random "real" region of the genome from the provided VCF file,
         and use the variation data in that region to produce an ndarray of shape
@@ -158,20 +197,24 @@ class RealDataRandomIterator:
 
         Returns:
             np.ndarray: np.ndarray of shape (n_haps, n_sites, 6).
+            np.ndarray: np.ndarray of shape (4,).
         """
 
         # first, choose a random chromosome. we'll randomly sample the chromosome
-        # names, weighted by their overall lengths.
-        chromosomes, lengths = (
-            list(self.sequence_lengths.keys()),
-            list(self.sequence_lengths.values()),
-        )
+        # names, weighted by their overall lengths.  
+        CHROMS = list(map(str, range(1, 23)))
+        CHROMS = [f"chr{c}" for c in CHROMS]
+
+        chromosomes, lengths = [], []
+        for chrom, length in self.sequence_lengths.items():
+            if autosomes_only and chrom not in CHROMS: continue
+            chromosomes.append(chrom)
+            lengths.append(length)
 
         lengths_arr = np.array(lengths)
         lengths_probs = lengths_arr / np.sum(lengths_arr)
 
         chromosome = self.rng.choice(chromosomes, size=1, p=lengths_probs)[0]
-        chromosome = "1"
         chromosome_len = self.sequence_lengths[chromosome]
 
         if start_pos is None:
@@ -186,9 +229,17 @@ class RealDataRandomIterator:
         excessive_overlap = self.excess_overlap(chromosome, start_pos, end_pos)
         # if we do have an accessible region
         if not excessive_overlap:
-            region = prep_real_region(self.vcf_, chromosome, start_pos, end_pos, self.num_haplotypes)
+            region = prep_real_region(
+                self.vcf_,
+                self.ancestor,
+                chromosome,
+                start_pos,
+                end_pos,
+                self.num_haplotypes,
+            )
             fixed_region = util.process_region(region, neg1=neg1)
-            return fixed_region
+            root_dists = get_root_nucleotide_dist(self.ancestor, chromosome, start_pos, end_pos)
+            return fixed_region, root_dists
 
         # try again recursively if not in accessible region
         else:
@@ -201,22 +252,29 @@ class RealDataRandomIterator:
         neg1=True,
     ):
 
+        # store the actual haplotype "images" in each batch within this region
         regions = np.zeros(
             (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
             dtype=np.float32,
         )
 
-        for i in range(batch_size):
-            regions[i] = self.sample_real_region(neg1, region_len)
+        # store the root distribution of nucleotides in each region
+        root_dists = np.zeros((batch_size, 4))
 
-        return regions
+        for i in range(batch_size):
+            region_img, region_nucs = self.sample_real_region(neg1, region_len)
+            regions[i] = region_img
+            root_dists[i] = region_nucs
+
+        return regions, root_dists
 
 
 if __name__ == "__main__":
     # test file
-    filename = sys.argv[1]
-    bed_file = sys.argv[2]
-    iterator = RealDataRandomIterator(filename, global_vars.DEFAULT_SEED, bed_file)
+    vcf_fh = sys.argv[1]
+    ref_fh = sys.argv[2]
+    bed_fh = sys.argv[3]
+    iterator = RealDataRandomIterator(vcf_fh, ref_fh, bed_fh, global_vars.DEFAULT_SEED)
 
     start_time = datetime.datetime.now()
     for i in range(100):
