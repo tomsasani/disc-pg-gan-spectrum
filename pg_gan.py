@@ -79,7 +79,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     # find starting point through pre-training (update generator in method)
     if not toy:
-        s_current = pg_gan.disc_pretraining(100) # 800
+        s_current = pg_gan.disc_pretraining(800) # 800
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
