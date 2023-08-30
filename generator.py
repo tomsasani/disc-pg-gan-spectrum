@@ -61,7 +61,7 @@ class Generator:
 
         # initialize matrix in which to store data
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_WINDOWS - 1, 6),
+            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
             dtype=np.float32)
 
         # set up parameters

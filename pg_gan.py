@@ -195,7 +195,7 @@ class PG_GAN:
         self.discriminator.build_graph((
             1,
             iterator.num_haplotypes,
-            global_vars.NUM_WINDOWS - 1,
+            global_vars.NUM_SNPS,
             NUM_CHANNELS,
         ))
         self.discriminator.summary()

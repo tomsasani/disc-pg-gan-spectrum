@@ -83,8 +83,8 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     #print (region)
     #print (sum_across_windows(region))
     # convert anc/der alleles to -1, 1
-    return sum_across_windows(region)
-    #return major_minor(region, neg1)
+    #return sum_across_windows(region)
+    return major_minor(region, neg1)
 
 def parse_params(param_input):
     """See which params were desired for inference"""
