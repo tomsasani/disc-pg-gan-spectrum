@@ -245,7 +245,7 @@ class PG_GAN:
             # sample a batch of real regions of the specified region_len
             real_regions, real_root_dists = self.iterator.real_batch(
                 neg1=True,
-                region_len=global_vars.L,
+                #region_len=global_vars.L,
             )
             # perform a training step. in a single training step,
             # we use the Generator to generate a set of corresponding
@@ -273,7 +273,9 @@ class PG_GAN:
         """ Generator loss """
         # NOTE: we provide a static root distribution of nucleotides when measuring
         # the generator loss here.
-        root_dists = np.array([0.25, 0.25, 0.25, 0.25])
+        #root_dists = np.array([0.25, 0.25, 0.25, 0.25])
+        root_dists = np.random.uniform(size=4)
+        root_dists /= np.sum(root_dists)
         root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
         generated_regions = self.generator.simulate_batch(root_dists_tiled, params=proposed_params)
         # not training when we use the discriminator here

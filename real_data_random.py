@@ -19,6 +19,7 @@ from cyvcf2 import VCF
 import tqdm
 import mutyper
 from collections import Counter
+import h5py
 
 # our imports
 import global_vars
@@ -65,42 +66,30 @@ def read_exclude(fh: str) -> IntervalTree:
 
     return tree
 
-def prep_real_region(vcf: VCF, ancestor: mutyper.Ancestor, chrom: str, start: int, end: int, n_haps: int) -> np.ndarray:
-    revcomp = {"A": "T", "T": "A", "C": "G", "G": "C"}
+def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_alleles: np.ndarray, alternate_alleles: np.ndarray, ancestor: mutyper.Ancestor, chrom: str, n_haps: int) -> np.ndarray:
+
     mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 
-    out_arr = np.zeros((end - start, n_haps, 6), dtype=np.float32)
-    called_positions = np.zeros(end - start, dtype=np.int8)
-
-    region_str = f"{chrom}:{start}-{end}"
-
-    # TODO: write function to filter variants (FILTER, etc.) on the fly,
-    # rather than requiring preprocessing using e.g., bcftools prior.
-    for v in vcf(region_str):
-        # require single-nucleotide variants
-        if v.var_type != "snp": continue
-        # filter out multi-allelics
-        if len(v.ALT) > 1: continue
-        ref, alt = v.REF.upper(), v.ALT[0].upper()
-        if ref in ("G", "T"):
-            ref, alt = revcomp[ref], revcomp[alt]
+    out_arr = np.zeros((global_vars.NUM_SNPS, n_haps, 6), dtype=np.float32)
+    # loop over SNPs
+    for vi in range(global_vars.NUM_SNPS):
         # only include mutations that occur at a confidently polarized
         # nucleotide in the ancestral reference genome.
         # NOTE: we do this so that we only include mutations that occurred
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
-        mutation = ancestor.mutation_type(v.CHROM, v.end, ref, alt)
+        # NOTE: always assuming that we're only dealing with biallelics        
+        mutation = ancestor.mutation_type(
+            chrom,
+            int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
+            reference_alleles[vi].decode("utf-8"),
+            alternate_alleles[vi][0].decode("utf-8"),
+        )
         if None in mutation: continue
         mut_i = mut2idx[">".join(mutation)]
+        out_arr[vi, :, mut_i] = haplotypes[vi]
 
-        vi = v.start - start
-        out_arr[vi, :, mut_i] = np.array(v.genotypes)[:, :-1].flatten()
-        called_positions[vi] = 1
-
-    # subset out_arr to the places (out of size end - start) where
-    # we actually called a mutation
-    out_arr_sub = out_arr[np.where(called_positions)[0], :, :]
-    return out_arr_sub
+    return out_arr
 
 def get_root_nucleotide_dist(ancestor: mutyper.Ancestor, chrom: str, start: int, end: int) -> np.ndarray:
     """
@@ -132,20 +121,32 @@ def get_root_nucleotide_dist(ancestor: mutyper.Ancestor, chrom: str, start: int,
 
 class RealDataRandomIterator:
 
-    def __init__(self, vcf_fh: str, ref_fh: str, bed_file: str, seed: int):
+    def __init__(self, hdf_fh: str, ref_fh: str, bed_file: str, seed: int):
         self.rng = default_rng(seed)
 
-        vcf = VCF(vcf_fh)
-        self.vcf_ = vcf
-        self.num_haplotypes = len(vcf.samples) * 2
+        callset = h5py.File(hdf_fh, mode='r')
+        print(list(callset.keys()))
+        # output: ['GT'] ['CHROM', 'POS']
+        print(list(callset['calldata'].keys()),list(callset['variants'].keys()))
+
+        raw_gts = callset['calldata/GT']
+        newshape = (raw_gts.shape[0], -1)
+        self.haplotypes = np.reshape(raw_gts, newshape)
+        #self.haplotypes = raw_gts.flatten()
+        self.haplotypes[self.haplotypes < 0] = 0
+        print("raw", raw_gts.shape)
+        print ("new", self.haplotypes.shape)
+
+        self.positions = callset['variants/POS']
+        self.reference_alleles = callset['variants/REF']
+        self.alternate_alleles = callset['variants/ALT']
+        # same length as pos_all, noting chrom for each variant (sorted)
+        self.chromosomes = callset['variants/CHROM']
+        self.num_haplotypes = self.haplotypes.shape[1]
 
         # read in ancestral sequence using mutyper
         ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
         self.ancestor = ancestor
-
-        # map chromosome names to chromosome lengths
-        seq2len = dict(zip(vcf.seqnames, vcf.seqlens))
-        self.sequence_lengths = seq2len
 
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
@@ -177,11 +178,11 @@ class RealDataRandomIterator:
         if overlap_pct > 0.5: return True
         else: return False
 
+
     def sample_real_region(
         self,
         neg1: bool,
-        region_len: int,
-        start_pos: int = None,
+        start_idx: int = None,
         autosomes_only: bool = True,
     ) -> np.ndarray:
         """Sample a random "real" region of the genome from the provided VCF file,
@@ -192,7 +193,6 @@ class RealDataRandomIterator:
 
         Args:
             neg1 (bool): Whether to store minor alleles as -1 (and major alleles as +1).
-            region_len (int): Desired length of the region (in base pairs) to query.
             start_pos (int, optional): Starting position of the desired region. Defaults to None.
 
         Returns:
@@ -200,41 +200,41 @@ class RealDataRandomIterator:
             np.ndarray: np.ndarray of shape (4,).
         """
 
-        # first, choose a random chromosome. we'll randomly sample the chromosome
-        # names, weighted by their overall lengths.  
-        CHROMS = list(map(str, range(1, 23)))
-        CHROMS = [f"chr{c}" for c in CHROMS]
+        AUTOSOMES = list(map(str, range(1, 23)))
+        AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
 
-        chromosomes, lengths = [], []
-        for chrom, length in self.sequence_lengths.items():
-            if autosomes_only and chrom not in CHROMS: continue
-            chromosomes.append(chrom)
-            lengths.append(length)
+        # grab a random position on the genome,
+        if start_idx is None:
+            start_idx = self.rng.integers(0, self.chromosomes.shape[0])
 
-        lengths_arr = np.array(lengths)
-        lengths_probs = lengths_arr / np.sum(lengths_arr)
+        # figure out the chromosome on which we're starting
+        chromosome, start_pos = self.chromosomes[start_idx].decode("utf-8"), self.positions[start_idx]
 
-        chromosome = self.rng.choice(chromosomes, size=1, p=lengths_probs)[0]
-        chromosome_len = self.sequence_lengths[chromosome]
+        # if the chromosome isn't an autosome, try again
+        if autosomes_only and chromosome not in AUTOSOMES:
+            return self.sample_real_region(neg1)
 
-        if start_pos is None:
-            # grab a random position on this chromosome, such that the position
-            # plus the desired region length doesn't exceed the length of the chromosome.
-            start_pos = self.rng.integers(0, chromosome_len - region_len)
+        # set the ending position to be the starting position + the
+        # number of SNPs we want to capture
+        end_idx = start_idx + global_vars.NUM_SNPS
 
-        end_pos = start_pos + region_len
-        # initialize a Region object for this interval
-        region = Region(chromosome, start_pos, end_pos)
+        # if we end on a different chromosome, try the whole process again
+        if self.chromosomes[end_idx].decode("utf-8") != chromosome:
+            return self.sample_real_region(neg1)
+
+        end_pos = self.positions[end_idx]
         # check if the region overlaps excluded regions by too much
         excessive_overlap = self.excess_overlap(chromosome, start_pos, end_pos)
+
         # if we do have an accessible region
         if not excessive_overlap:
             region = prep_real_region(
-                self.vcf_,
+                self.haplotypes[start_idx:end_idx],
+                self.positions[start_idx:end_idx],
+                self.reference_alleles[start_idx:end_idx],
+                self.alternate_alleles[start_idx:end_idx],
                 self.ancestor,
                 chromosome,
-                start_pos,
-                end_pos,
                 self.num_haplotypes,
             )
             fixed_region = util.process_region(region, neg1=neg1)
@@ -243,11 +243,12 @@ class RealDataRandomIterator:
 
         # try again recursively if not in accessible region
         else:
-            return self.sample_real_region(neg1, region_len)
+            return self.sample_real_region(neg1)
+
+
 
     def real_batch(
         self,
-        region_len: int,
         batch_size=global_vars.BATCH_SIZE,
         neg1=True,
     ):
@@ -262,7 +263,7 @@ class RealDataRandomIterator:
         root_dists = np.zeros((batch_size, 4))
 
         for i in range(batch_size):
-            region_img, region_nucs = self.sample_real_region(neg1, region_len)
+            region_img, region_nucs = self.sample_real_region(neg1)
             regions[i] = region_img
             root_dists[i] = region_nucs
 
@@ -271,14 +272,14 @@ class RealDataRandomIterator:
 
 if __name__ == "__main__":
     # test file
-    vcf_fh = sys.argv[1]
+    hdf_fh = sys.argv[1]
     ref_fh = sys.argv[2]
     bed_fh = sys.argv[3]
-    iterator = RealDataRandomIterator(vcf_fh, ref_fh, bed_fh, global_vars.DEFAULT_SEED)
+    iterator = RealDataRandomIterator(hdf_fh, ref_fh, bed_fh, global_vars.DEFAULT_SEED)
 
     start_time = datetime.datetime.now()
     for i in range(100):
-        region = iterator.sample_real_region(False, 50_000)
+        region = iterator.sample_real_region(False)
 
     end_time = datetime.datetime.now()
     elapsed = end_time - start_time

@@ -16,6 +16,9 @@ import param_set
 import real_data_random
 import simulation
 
+def sum_across_channels(X: np.ndarray) -> np.ndarray:
+    return np.expand_dims(np.sum(X, axis=2), axis=2)
+
 def sum_across_windows(X: np.ndarray) -> np.ndarray:
 
     n_haps, n_sites, n_channels = X.shape
@@ -83,8 +86,8 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     #print (region)
     #print (sum_across_windows(region))
     # convert anc/der alleles to -1, 1
-    #return sum_across_windows(region)
     return major_minor(region, neg1)
+    #return major_minor(region, neg1)
 
 def parse_params(param_input):
     """See which params were desired for inference"""
@@ -137,9 +140,9 @@ def parse_args():
     p = argparse.ArgumentParser()
 
     p.add_argument(
-        '--data_vcf',
+        '--data',
         type=str,
-        help='real data file in VCF format',
+        help='real data file in hdf5 format',
         required=True,
     )
     p.add_argument(
@@ -201,7 +204,7 @@ def process_args(args, summary_stats = False):
     # initialize the Iterator object, which will iterate over
     # the VCF and grab regions of the size specified in global_vars.L
     iterator = real_data_random.RealDataRandomIterator(
-        vcf_fh=args.data_vcf,
+        hdf_fh=args.data,
         ref_fh=args.ref,
         bed_file=args.bed,
         seed=args.seed,
