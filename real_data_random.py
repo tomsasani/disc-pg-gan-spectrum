@@ -218,6 +218,10 @@ class RealDataRandomIterator:
         # number of SNPs we want to capture
         end_idx = start_idx + global_vars.NUM_SNPS
 
+        # make sure end idx isn't off the edge of the chromosome
+        if end_idx >= self.positions.shape[0] - 1:
+            return self.sample_real_region(neg1)
+
         # if we end on a different chromosome, try the whole process again
         if self.chromosomes[end_idx].decode("utf-8") != chromosome:
             return self.sample_real_region(neg1)

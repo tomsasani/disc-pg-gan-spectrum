@@ -2,7 +2,7 @@
 # section A: general -----------------------------------------------------------
 #NUM_WINDOWS = 36
 #WINDOW_SIZE = 10
-NUM_SNPS = 36 * 4       # number of seg sites, should be divisible by 4
+NUM_SNPS = 36 * 3       # number of seg sites, should be divisible by 4
 L = 50_000           # heuristic to get enough SNPs for simulations (50,000 or fifty-thousand)
 BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
 
