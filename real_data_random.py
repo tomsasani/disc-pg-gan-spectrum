@@ -148,8 +148,16 @@ class RealDataRandomIterator:
         ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
         self.ancestor = ancestor
 
+        AUTOSOMES = list(map(str, range(1, 23)))
+        AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
+        self.autosomes = AUTOSOMES
+
+        # TODO: hacky
+        self.base_root_dist = get_root_nucleotide_dist(self.ancestor, "chr1", 1, 200_000_000)
+
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
+
 
     def excess_overlap(self, chrom: str, start: int, end: int) -> bool:
         """
@@ -200,9 +208,6 @@ class RealDataRandomIterator:
             np.ndarray: np.ndarray of shape (4,).
         """
 
-        AUTOSOMES = list(map(str, range(1, 23)))
-        AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
-
         # grab a random position on the genome,
         if start_idx is None:
             start_idx = self.rng.integers(0, self.chromosomes.shape[0])
@@ -211,7 +216,7 @@ class RealDataRandomIterator:
         chromosome, start_pos = self.chromosomes[start_idx].decode("utf-8"), self.positions[start_idx]
 
         # if the chromosome isn't an autosome, try again
-        if autosomes_only and chromosome not in AUTOSOMES:
+        if autosomes_only and chromosome not in self.autosomes:
             return self.sample_real_region(neg1)
 
         # set the ending position to be the starting position + the
