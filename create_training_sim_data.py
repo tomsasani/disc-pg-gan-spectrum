@@ -89,7 +89,7 @@ def main(args):
         reference[positions] = reference_alleles
         with open(f"data/simulated/ref/{chrom}.simulated.fa", "w") as outfh:
             reference_seq = "".join(reference)
-            outfh.write(f">{chrom}\n{reference_seq}")
+            outfh.write(f">{chrom}\n{reference_seq}\n")
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
