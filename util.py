@@ -69,25 +69,17 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     # enough SNPs, take middle portion
     if mid >= half_S:
         middle_portion = X[mid - half_S:mid + other_half_S, :, :]
-        # compute sums of derived alleles on each haplotype for each mutation type
-        #middle_portion_sums = compute_haplotype_sums(middle_portion, window_size = global_vars.NUM_SNPS)
-        # transpose so that haplotypes (not sites) are in 0th dimension
-        #middle_portion_sums = np.transpose(middle_portion_sums, (1, 0, 2))
-        #print (middle_portion_sums.shape)
         region[:, :, :] = np.transpose(middle_portion, (1, 0, 2))
 
     else:
-        #print("NOT ENOUGH SNPS", n_sites)
         if n_sites % 2 == 1: other_half_S += 1
         # use the complete genotype array
         # but just add it to the center of the main array
         region[:, half_S - mid:mid + other_half_S, :] = np.transpose(
                    X, (1, 0, 2))
-    #print (region)
-    #print (sum_across_windows(region))
+    
     # convert anc/der alleles to -1, 1
     return major_minor(region, neg1)
-    #return major_minor(region, neg1)
 
 def parse_params(param_input):
     """See which params were desired for inference"""
@@ -106,17 +98,21 @@ def parse_params(param_input):
 
 def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
-    n = matrix.shape[0]
-    for j in range(matrix.shape[1]):
-        if np.count_nonzero(matrix[:,j] > 0) > (n/2): # count the 1's
-            matrix[:,j] = 1 - matrix[:,j]
 
+    # NOTE: need to fix potential mispolarization if using ancestral genome?
+    n_haps, n_sites, n_channels = matrix.shape
+    # n = matrix.shape[0]
+    for site_i in range(n_sites):
+        for mut_i in range(n_channels):
+            # if greater than 50% of haplotypes are ALT, reverse
+            # the REF/ALT polarization
+            if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2): 
+                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
     # option to convert from 0/1 to -1/+1
     if neg1:
         matrix[matrix == 0] = -1
     # residual numbers higher than one may remain even though we restricted to
     # biallelic
-    #matrix[matrix > 1] = 1 # removing since we filter in VCF
     return matrix
 
 def prep_real(gt, snp_start, snp_end, indv_start, indv_end):
