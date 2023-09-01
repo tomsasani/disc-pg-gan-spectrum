@@ -1,9 +1,11 @@
+import allel
+
 CHROMS = list(map(str, range(1, 23)))
 CHROMS = [f"chr{c}" for c in CHROMS]
 
 rule all:
     input:
-        "data/simulated/simulated.vcf.gz",
+        "data/simulated/simulated.h5",
         "data/simulated/simulated.fa"
 
 rule make_training:
@@ -36,3 +38,14 @@ rule combine_ref:
         """
         cat {input} > {output}
         """
+
+rule convert_to_h5:
+    input: vcf = "data/simulated/simulated.vcf.gz"
+    output: hdf = "data/simulated/simulated.h5"
+    run:
+        allel.vcf_to_hdf5(
+            input.vcf,
+            output.hdf,
+            fields=['CHROM', 'GT', 'POS', 'REF', 'ALT'],
+            overwrite=True,
+        )

@@ -1,14 +1,10 @@
 import param_set
-from generator import Generator
 import numpy as np
 import math
 import msprime
-import h5py
-import allel
 import tqdm 
 import time 
 import tskit 
-import numba 
 import argparse
 
 def create_reference(root_distribution: np.ndarray, seq_length: int = 1_000_000):
