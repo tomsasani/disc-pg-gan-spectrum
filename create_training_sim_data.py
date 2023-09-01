@@ -5,15 +5,19 @@ import math
 import msprime
 import h5py
 import allel
+import tqdm 
+import time 
+import tskit 
+import numba 
+import argparse
 
 def create_reference(root_distribution: np.ndarray, seq_length: int = 1_000_000):
-    nucleotides = ["A", "C", "G", "T"]
+    
+    options = ["A", "C", "G", "T"]
 
-    reference = []
-    for i in range(seq_length):
-        nucleotide = np.random.choice(nucleotides, p=root_distribution)[0]
-        reference.append(nucleotide)
-    return reference
+    sequence = np.random.choice(options, p=root_distribution, size=seq_length)
+    
+    return sequence
 
 def simulate_exp(params, sample_sizes, root_distribution, seed, seq_length: int = 1_000_000):
     """Note this is a 1 population model"""
@@ -51,45 +55,56 @@ def simulate_exp(params, sample_sizes, root_distribution, seed, seq_length: int 
 
     return mts
 
-batch_size = 10
-params = param_set.ParamSet()
+def main(args):
+    params = param_set.ParamSet()
 
-LENGTH = 1_000_000
+    nucs = ["A", "C", "G", "T"]
+    options = np.arange(1, 5)
+    option2nuc = dict(zip(options, nucs))
 
-parameters = ["mu", "rho", "T1", "T2", "N1", "N2"]#, "conversion", "conversion_length"]
-parameter_values = [1.5e-8, 2e-8, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
+    parameters = ["mu", "rho", "T1", "T2", "N1", "N2"]#, "conversion", "conversion_length"]
+    parameter_values = [5e-9, 5e-9, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
 
-params.update(parameters, parameter_values)
+    params.update(parameters, parameter_values)
 
-root_dists = np.array([0.25, 0.25, 0.25, 0.25])
+    root_dists = np.array([0.25, 0.25, 0.25, 0.25])
 
-# generate the simulation
-treeseq = simulate_exp(params, [100], root_dists, 4242, seq_length=LENGTH)
+    CHROMS = list(map(str, range(1, 23)))
+    CHROMS = [f"chr{c}" for c in CHROMS]
+    # simulate a bunch of chromosomes
+    for chrom in tqdm.tqdm(CHROMS):
 
-# generate a toy reference genome using the specified root distribution
-reference = create_reference(root_dists, seq_length=LENGTH)
+        cur_time = time.time()
+        # generate the simulation
+        treeseq = simulate_exp(params, [100], root_dists, 4242, seq_length=args.length)
+        site_table = treeseq.tables.sites
+        positions = site_table.position.astype(np.int64)
+        reference_alleles = tskit.unpack_strings(site_table.ancestral_state, site_table.ancestral_state_offset)
+        # generate a toy reference genome using the specified root distribution
+        reference = create_reference(root_dists, seq_length=args.length)
+        #reference = np.array([option2nuc[o] for o in reference])
+        # refactor reference using true ancestral alleles and create hdf5
 
-# refactor reference using true ancestral alleles and create hdf5
+        # first convert to VCF
+        with open(f"data/simulated/vcf/{chrom}.simulated.vcf", "w") as outfh:
+            treeseq.write_vcf(outfh, contig_id=chrom)
+        # update reference sequence
 
-# first convert to VCF
-with open("data/vcf/simulated.vcf", "w") as outfh:
-    treeseq.write_vcf(outfh, contig_id="chr1")
+        reference[positions] = reference_alleles
+        with open(f"data/simulated/ref/{chrom}.simulated.fa", "w") as outfh:
+            reference_seq = "".join(reference)
+            outfh.write(f">{chrom}\n{reference_seq}")
 
-# update reference sequence
-for var in treeseq.variants():
-    ref = var.alleles[0]
-    pos = int(var.site.position)
-    # update reference at position
-    reference[pos] = ref
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("-length", default=1_000_000, type=int)
+    args = p.parse_args()
+    main(args)
 
-with open("data/ref/simulated.fa", "w") as outfh:
-    reference_seq = "".join(reference)
-    outfh.write(f">chr1\n{reference_seq}")
-
-# conver to h5
-allel.vcf_to_hdf5(
-    "data/vcf/simulated.vcf",
-    "data/vcf/simulated.h5",
-    fields=['CHROM', 'GT', 'POS', 'REF', 'ALT'],
-    overwrite=True,
-)
+# # convert to h5
+# allel.vcf_to_hdf5(
+#     "data/vcf/simulated.vcf",
+#     "data/vcf/simulated.h5",
+#     fields=['CHROM', 'GT', 'POS', 'REF', 'ALT'],
+#     overwrite=True,
+# )
