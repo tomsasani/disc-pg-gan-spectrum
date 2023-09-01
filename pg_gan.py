@@ -274,8 +274,7 @@ class PG_GAN:
         # NOTE: we provide a static root distribution of nucleotides when measuring
         # the generator loss here.
         #root_dists = np.array([0.25, 0.25, 0.25, 0.25])
-        root_dists = np.random.uniform(size=4)
-        root_dists /= np.sum(root_dists)
+        root_dists = self.iterator.base_root_dist
         root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
         generated_regions = self.generator.simulate_batch(root_dists_tiled, params=proposed_params)
         # not training when we use the discriminator here
@@ -321,6 +320,12 @@ class PG_GAN:
         real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
         fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
         total_loss = real_loss + fake_loss
+
+        # add on entropy regularization (small penalty)
+        real_entropy = scipy.stats.entropy(tf.nn.sigmoid(real_output))
+        fake_entropy = scipy.stats.entropy(tf.nn.sigmoid(fake_output))
+        entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
+            fake_entropy)) # can I just use +,*? TODO experiement with constant
 
         return total_loss, real_acc, fake_acc
 
