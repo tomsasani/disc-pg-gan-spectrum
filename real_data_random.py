@@ -78,7 +78,7 @@ def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_al
         # NOTE: we do this so that we only include mutations that occurred
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
-        # NOTE: always assuming that we're only dealing with biallelics        
+        # NOTE: always assuming that we're only dealing with biallelics   
         mutation = ancestor.mutation_type(
             chrom,
             int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
@@ -178,13 +178,17 @@ class RealDataRandomIterator:
         """
         total_bp_overlap = 0
 
-        overlaps = self.exclude_tree[chrom].find(start, end)
-        for inter in overlaps:
-            total_bp_overlap += inter.end - inter.start
+        if self.exclude_tree is None:
+            return False
 
-        overlap_pct = total_bp_overlap / (end - start)
-        if overlap_pct > 0.5: return True
-        else: return False
+        else:
+            overlaps = self.exclude_tree[chrom].find(start, end)
+            for inter in overlaps:
+                total_bp_overlap += inter.end - inter.start
+
+            overlap_pct = total_bp_overlap / (end - start)
+            if overlap_pct > 0.5: return True
+            else: return False
 
 
     def sample_real_region(

@@ -147,17 +147,17 @@ def parse_args():
         help="path to ancestral reference",
         required=True,
     )
-    p.add_argument(
-        '--bed',
-        type=str,
-        help='bed file (mask)',
-        required=True,
-    )
+    
     p.add_argument(
         '--disc',
         type=str,
         dest='disc',
         help='location to store discriminator',
+    )
+    p.add_argument(
+        '-bed',
+        type=str,
+        help='bed file (mask)',
     )
     p.add_argument(
         '-params',
