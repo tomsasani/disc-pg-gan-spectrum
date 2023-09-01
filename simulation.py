@@ -50,8 +50,8 @@ def simulate_exp(params, sample_sizes, root_distribution, seed):
         #mutation_rate=params.mu.value,
         sequence_length=global_vars.L,
         recombination_rate=params.rho.value,
-        gene_conversion_rate=params.conversion.value,
-        gene_conversion_tract_length=params.conversion_length.value,
+        #gene_conversion_rate=params.conversion.value,
+        #gene_conversion_tract_length=params.conversion_length.value,
         discrete_genome=True,
         random_seed=seed,
     )
