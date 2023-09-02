@@ -33,8 +33,8 @@ class OnePopModel(Model):
             self.dropout = Dropout(rate=0.3)
 
             # change from 128,128 to 32,32,16 (same # params)
-            self.fc1 = Dense(128, activation='relu')
-            self.fc2 = Dense(128, activation='relu')
+            self.fc1 = Dense(64, activation='relu')
+            self.fc2 = Dense(64, activation='relu')
             self.dense3 = Dense(1)#2, activation='softmax') # two classes
 
         else:

@@ -44,7 +44,7 @@ def simulate_exp(params, sample_sizes, root_distribution, seed, seq_length: int 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        model=msprime.HKY(root_distribution=root_distribution, kappa=2.),
+        model=msprime.F84(root_distribution=root_distribution, kappa=2.),
         random_seed=seed,
         discrete_genome=True,
     )

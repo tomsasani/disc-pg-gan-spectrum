@@ -22,7 +22,7 @@ import util
 from real_data_random import Region
 
 # globals for simulated annealing
-NUM_ITER = 150
+NUM_ITER = 300
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -79,7 +79,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     # find starting point through pre-training (update generator in method)
     if not toy:
-        s_current = pg_gan.disc_pretraining(800) # 800
+        s_current = pg_gan.disc_pretraining(800)
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
@@ -142,10 +142,10 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         rand = np.random.rand()
         accept = rand < p_accept
 
+        real_acc, fake_acc = 0, 0
+
         # if we accept the current set of parameters, let's retrain our model!
         if accept:
-            for pi, p in enumerate(parameters):
-                out_df.append({"epoch": i, "param": p.name, "generator_loss": loss_best, "param_value": s_best[pi]})
             print("ACCEPTED")
             s_current = s_best
             # NOTE: should this be pg_gan.generator.update_params() ?
@@ -159,7 +159,11 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         else:
             print("NOT ACCEPTED")
 
+        for pi, p in enumerate(parameters):
+            out_df.append({"epoch": i, "param": p.name, "generator_loss": loss_best, "param_value": s_best[pi], "Real acc": real_acc, "Fake acc": fake_acc})
+
         print("T, p_accept, rand, s_current, loss_curr", end=" ")
+        print (f"Temperature: {T}, Generator loss: {loss_curr}, Real acc: {real_acc}, Fake acc: {fake_acc}")
         print(T, p_accept, rand, s_current, loss_curr)
         posterior.append(s_current)
         loss_lst.append(loss_curr)
@@ -290,10 +294,17 @@ class PG_GAN:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
             generated_regions = self.generator.simulate_batch(real_root_dists)
+            # f, axarr = plt.subplots(6, 2, figsize=(12, 10))
+            # for channel_i in np.arange(6):
+            #     sns.heatmap(real_regions[0][:, :, channel_i], ax=axarr[channel_i, 0])
+            #     sns.heatmap(generated_regions[0][:, :, channel_i], ax=axarr[channel_i, 1])
+            # f.tight_layout()
+            # f.savefig("regions.png")
             # predict class labels (fake or real) for the real regions
             real_output = self.discriminator(real_regions, training=True)
             # do the same for the fake/generated regions
             fake_output = self.discriminator(generated_regions, training=True)
+            #print (f"Predicted classes on real regions: {np.sum(real_output >= 0)}\nPredicted classes on generated regions: {np.sum(fake_output > 0)}")
             # measure the discriminator "loss," as well as separate measures of
             # accuracy predicting labels for the real and fake regions
             disc_loss, real_acc, fake_acc = self.discriminator_loss(
@@ -327,7 +338,7 @@ class PG_GAN:
         entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
             fake_entropy)) # can I just use +,*? TODO experiement with constant
 
-        return total_loss, real_acc, fake_acc
+        return total_loss + entropy, real_acc, fake_acc
 
 
 ################################################################################
