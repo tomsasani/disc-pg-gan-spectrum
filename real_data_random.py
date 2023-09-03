@@ -68,8 +68,6 @@ def read_exclude(fh: str) -> IntervalTree:
 
 def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_alleles: np.ndarray, alternate_alleles: np.ndarray, ancestor: mutyper.Ancestor, chrom: str, n_haps: int) -> np.ndarray:
 
-    mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
-
     out_arr = np.zeros((global_vars.NUM_SNPS, n_haps, 6), dtype=np.float32)
     # loop over SNPs
     for vi in range(global_vars.NUM_SNPS):
@@ -86,12 +84,12 @@ def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_al
             alternate_alleles[vi][0].decode("utf-8"),
         )
         if None in mutation: continue
-        mut_i = mut2idx[">".join(mutation)]
+        mut_i = global_vars.MUT2IDX[">".join(mutation)]
         out_arr[vi, :, mut_i] = haplotypes[vi]
 
     return out_arr
 
-def get_root_nucleotide_dist(ancestor: mutyper.Ancestor, chrom: str, start: int, end: int) -> np.ndarray:
+def get_root_nucleotide_dist(sequence: str):
     """
     Given an interval, figure out the frequency of each nucleotide within the
     region using an ancestral reference genome sequence. This is important so that we
@@ -106,12 +104,10 @@ def get_root_nucleotide_dist(ancestor: mutyper.Ancestor, chrom: str, start: int,
     Returns:
         np.ndarray: 1-D numpy array containing frequencies of A,T,C and G nucs.
     """
-    nuc_order = ["A", "C", "G", "T"]
-    sequence = str(ancestor[chrom][start:end].seq).upper()
     counts = Counter(sequence)
 
     root_dist = np.zeros(4)
-    for nuc_i, nuc in enumerate(nuc_order):
+    for nuc_i, nuc in enumerate(global_vars.NUC_ORDER):
         root_dist[nuc_i] = counts[nuc]
     # NOTE: maybe don't do this in the future
     if np.sum(root_dist) == 0:
@@ -153,7 +149,8 @@ class RealDataRandomIterator:
         self.autosomes = AUTOSOMES
 
         # TODO: hacky
-        self.base_root_dist = get_root_nucleotide_dist(self.ancestor, "chr1", 1, 200_000_000)
+        #sequence =  str(self.ancestor["chr1"][1:200_000_000].seq).upper()
+        self.base_root_dist = np.array([0.2, 0.3, 0.3, 0.2])#get_root_nucleotide_dist(sequence)
 
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
@@ -251,7 +248,8 @@ class RealDataRandomIterator:
                 self.num_haplotypes,
             )
             fixed_region = util.process_region(region, neg1=neg1)
-            root_dists = get_root_nucleotide_dist(self.ancestor, chromosome, start_pos, end_pos)
+            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            root_dists = get_root_nucleotide_dist(sequence)
             return fixed_region, root_dists
 
         # try again recursively if not in accessible region

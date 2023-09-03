@@ -9,6 +9,11 @@ BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
 DEFAULT_SEED = 1833
 DEFAULT_SAMPLE_SIZE = 198
 
+MUT2IDX = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
+REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
+NUC_ORDER = ["A", "C", "G", "T"]
+
+
 # section B: overwriting in-file data-------------------------------------------
 
 # to use custom trial data, switch OVERWRITE_TRIAL_DATA to True and

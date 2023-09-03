@@ -18,7 +18,6 @@ rule make_training:
         python {input} -length 10000000
         """
 
-
 rule combine_vcf:
     input:
         expand("data/simulated/vcf/{chrom}.simulated.vcf", chrom=CHROMS)

@@ -100,14 +100,14 @@ def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites, n_channels = matrix.shape
+    # n_haps, n_sites, n_channels = matrix.shape
     # n = matrix.shape[0]
-    for site_i in range(n_sites):
-        for mut_i in range(n_channels):
-            # if greater than 50% of haplotypes are ALT, reverse
-            # the REF/ALT polarization
-            if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2): 
-                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
+    # for site_i in range(n_sites):
+    #     for mut_i in range(n_channels):
+    #         # if greater than 50% of haplotypes are ALT, reverse
+    #         # the REF/ALT polarization
+    #         if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2): 
+    #             matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
     # option to convert from 0/1 to -1/+1
     if neg1:
         matrix[matrix == 0] = -1

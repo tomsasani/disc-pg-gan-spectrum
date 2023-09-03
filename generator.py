@@ -113,9 +113,6 @@ def prep_region(ts, neg1=False) -> np.ndarray:
     """Gets simulated data ready. Returns a matrix of size
     (n_haps, n_sites, 6)"""
 
-    revcomp = {"A": "T", "T": "A", "C": "G", "G": "C"}
-    mut2idx = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
-
     n_sites, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
     X = np.zeros((n_sites, n_haps, 6))
@@ -129,11 +126,11 @@ def prep_region(ts, neg1=False) -> np.ndarray:
         for alt_idx, alt in enumerate(alts):
             haps_with_alt = np.where(gts == alt_idx + 1)[0]
             if ref in ("G", "T"):
-                ref, alt = revcomp[ref], revcomp[alt]
+                ref, alt = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
             # TODO: deal with silent mutations
             if ref == alt: continue
             mutation = ">".join([ref, alt])
-            mutation_idx = mut2idx[mutation]
+            mutation_idx = global_vars.MUT2IDX[mutation]
             X[var_idx, haps_with_alt, mutation_idx] += 1
         var_idx += 1
     return X
