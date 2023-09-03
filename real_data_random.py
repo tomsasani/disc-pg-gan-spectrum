@@ -139,6 +139,7 @@ class RealDataRandomIterator:
         # same length as pos_all, noting chrom for each variant (sorted)
         self.chromosomes = callset['variants/CHROM']
         self.num_haplotypes = self.haplotypes.shape[1]
+        print 
 
         # read in ancestral sequence using mutyper
         ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
@@ -147,11 +148,13 @@ class RealDataRandomIterator:
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
         self.autosomes = AUTOSOMES
-
-        # TODO: hacky
-        #sequence =  str(self.ancestor["chr1"][1:200_000_000].seq).upper()
-        self.base_root_dist = np.array([0.2, 0.3, 0.3, 0.2])#get_root_nucleotide_dist(sequence)
-
+        # calculate the mean root distribution across chromosomes
+        chrom_root_dists = np.zeros((len(set(self.chromosomes)), 4))
+        for chrom_i, chrom in enumerate(set(self.chromosomes)):
+            sequence =  str(self.ancestor[chrom.decode("utf-8")][:-1].seq).upper()
+            root_dist = get_root_nucleotide_dist(sequence)
+            chrom_root_dists[chrom_i] = root_dist
+        self.base_root_dist = np.mean(chrom_root_dists, axis=0)
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
 

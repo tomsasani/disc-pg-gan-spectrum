@@ -275,9 +275,13 @@ class PG_GAN:
 
     def generator_loss(self, proposed_params):
         """ Generator loss """
-        # NOTE: we provide a static root distribution of nucleotides when measuring
-        # the generator loss here.
-        #root_dists = np.array([0.25, 0.25, 0.25, 0.25])
+        # NOTE: how to parameterize the root distribution for the generator loss?
+        # this is a tricky one, since a true test should use the root distribution of
+        # a "real" region. perhaps we can use the average root distribution
+        # of the "real" genome across chromosomes? in order for this to be a fiar comparison
+        # (i.e., for the generator to have a chance at producing a region that is "good enough"
+        # to fool the discriminator), we need to give it a root distribution to simualte from
+        # that is close to a real region.
         root_dists = self.iterator.base_root_dist
         root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
         generated_regions = self.generator.simulate_batch(root_dists_tiled, params=proposed_params)
@@ -338,7 +342,7 @@ class PG_GAN:
         entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
             fake_entropy)) # can I just use +,*? TODO experiement with constant
 
-        return total_loss + entropy, real_acc, fake_acc
+        return total_loss, real_acc, fake_acc
 
 
 ################################################################################
