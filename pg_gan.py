@@ -342,7 +342,7 @@ class PG_GAN:
         entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
             fake_entropy)) # can I just use +,*? TODO experiement with constant
 
-        return total_loss, real_acc, fake_acc
+        return total_loss - entropy, real_acc, fake_acc
 
 
 ################################################################################
