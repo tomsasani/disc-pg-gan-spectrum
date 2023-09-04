@@ -2,7 +2,6 @@ import allel
 
 CHROMS = list(map(str, range(1, 23)))
 CHROMS = [f"chr{c}" for c in CHROMS]
-CHROMS = ["chr1"]
 
 rule all:
     input:
@@ -16,7 +15,7 @@ rule make_training:
         temp(expand("data/simulated/ref/{chrom}.simulated.fa", chrom=CHROMS))
     shell:
         """
-        python {input} -length 200000000
+        python {input} -length 25000000
         """
 
 rule combine_vcf:
