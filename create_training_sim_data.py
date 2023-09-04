@@ -64,12 +64,13 @@ def main(args):
     params = param_set.ParamSet()
 
     parameters = ["mu", "rho", "T1", "T2", "N1", "N2"]#, "conversion", "conversion_length"]
-    parameter_values = [1e-9, 1e-9, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
+    parameter_values = [5e-8, 5e-8, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
 
     params.update(parameters, parameter_values)
 
     CHROMS = list(map(str, range(1, 23)))
     CHROMS = [f"chr{c}" for c in CHROMS]
+    CHROMS = ["chr1"]
     # simulate a bunch of chromosomes
     for chrom in tqdm.tqdm(CHROMS):
         # simulate the reference
