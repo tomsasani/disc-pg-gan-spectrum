@@ -64,7 +64,7 @@ def main(args):
     params = param_set.ParamSet()
 
     parameters = ["mu", "rho", "T1", "T2", "N1", "N2"]#, "conversion", "conversion_length"]
-    parameter_values = [5e-8, 5e-8, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
+    parameter_values = [5e-9, 5e-9, 2_000, 350, 9_000, 5_000]#, 5e-8, 2]
 
     params.update(parameters, parameter_values)
 

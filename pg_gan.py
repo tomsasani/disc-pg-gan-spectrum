@@ -118,7 +118,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
                 s_proposal[k] = parameters[k].proposal(s_current[k], T)
                 # for each parameter value, figure out the Generator loss.
                 # that is, using the proposed parameter values, generate some fake
-                # data (with no real data paired alongside it at all) and see how 
+                # data (with no real data paired alongside it at all) and see how
                 # good our discriminator is at telling that it's fake.
                 loss_proposal = pg_gan.generator_loss(s_proposal)
                 # if our Generator's loss is better than the best so far *in this iteration*, use these
@@ -130,7 +130,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         # figure out whether the Generator loss in this iteration is better than the best
         # loss observed so far *in any iteration*. if it is, set the "probability that we
         # should accept this set of parameters for the Generator" to be 1.
-        if loss_best <= loss_curr: 
+        if loss_best <= loss_curr:
             p_accept = 1
         # otherwise, set the "probability that we should accept this set of parameters for the Generator"
         # to be a float that captures the degree to which the current loss compares to the best loss. basically,
@@ -336,11 +336,22 @@ class PG_GAN:
         fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
         total_loss = real_loss + fake_loss
 
-        # add on entropy regularization (small penalty)
+        # NOTE: we want to penalize our discriminator if it always
+        # picks the same class label for every input (which would achieve
+        # 50% accuracy, since 50% of the data in each batch is real/fake).
+        # so, we can calculate the entropy of the predicted class probabilities
+        # on the real and fake datasets, and we subtract that from the Discriminator loss.
+        # more variable predictions (i.e., not all 1s) should have higher entropy, so
+        # they should "reward" the Discriminator by lowering its loss.
         real_entropy = scipy.stats.entropy(tf.nn.sigmoid(real_output))
         fake_entropy = scipy.stats.entropy(tf.nn.sigmoid(fake_output))
-        entropy = tf.math.scalar_mul(0.001/2, tf.math.add(real_entropy,
-            fake_entropy)) # can I just use +,*? TODO experiement with constant
+        # TODO: experiment with constant (scalar) by which we multiply
+        # the total entropy. higher scalars will reward the Discriminator for
+        # more variable guesses, but not sure how high we want to go.
+        entropy = tf.math.scalar_mul(
+            0.001 / 2,
+            tf.math.add(real_entropy, fake_entropy),
+        )  
 
         return total_loss - entropy, real_acc, fake_acc
 
