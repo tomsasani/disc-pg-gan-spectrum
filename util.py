@@ -36,7 +36,7 @@ def sum_across_windows(X: np.ndarray) -> np.ndarray:
         rel_regions_sum[:, i, :] = derived_sum_rescaled
     return rel_regions_sum
 
-def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
+def process_region(X: np.ndarray, dist_vec: np.ndarray, neg1: bool = True) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
     from either generated or real data. First, subset it to contain global_vars.NUM_SNPS
@@ -51,7 +51,8 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     Returns:
         np.ndarray: _description_
     """
-
+    # figure out how many sites and haplotypes are in the actual
+    # multi-dimensional array
     n_sites, n_haps = X.shape[:-1]
 
     # figure out the half-way point (measured in numbers of sites)
@@ -63,23 +64,32 @@ def process_region(X: np.ndarray, neg1: bool = True) -> np.ndarray:
     half_S = S // 2
     other_half_S = half_S
 
-    # instantiate the new region, formatted as (n_haps, n_sites, 6)
-    region = np.zeros((n_haps, global_vars.NUM_SNPS, 6), dtype=np.float32)
+    # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
+    region = np.zeros((n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS), dtype=np.float32)
 
-    # enough SNPs, take middle portion
+    # if 
     if mid >= half_S:
+        # add first channels of mutation spectra
         middle_portion = X[mid - half_S:mid + other_half_S, :, :]
-        region[:, :, :] = np.transpose(middle_portion, (1, 0, 2))
+        region[:, :, :-1] = major_minor(sum_across_channels(np.transpose(middle_portion, (1, 0, 2))), neg1)
+        # tile the inter-snp distances down the haplotypes
+        distances = np.tile(dist_vec[mid - half_S:mid + other_half_S], (n_haps, 1))
+        # add final channel of inter-snp distances
+        region[:, :, -1] = distances
 
     else:
         if n_sites % 2 == 1: other_half_S += 1
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, half_S - mid:mid + other_half_S, :] = np.transpose(
-                   X, (1, 0, 2))
+        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(
+                   X, (1, 0, 2))), neg1)
+        # tile the inter-snp distances down the haplotypes
+        distances = np.tile(dist_vec, (n_haps, 1))
+        # add final channel of inter-snp distances
+        region[:, half_S - mid:mid + other_half_S, -1] = distances
     
     # convert anc/der alleles to -1, 1
-    return major_minor(region, neg1)
+    return region
 
 def parse_params(param_input):
     """See which params were desired for inference"""

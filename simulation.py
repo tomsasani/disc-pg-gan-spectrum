@@ -51,7 +51,7 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, root_distribution, seed):
+def simulate_exp(params, sample_sizes, root_distribution, region_length, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -71,7 +71,7 @@ def simulate_exp(params, sample_sizes, root_distribution, seed):
     ts = msprime.sim_ancestry(
         samples=sum(sample_sizes),
         demography=demography,
-        sequence_length=global_vars.L,
+        sequence_length=region_length,
         recombination_rate=params.rho.value,
         discrete_genome=True,
         random_seed=seed,

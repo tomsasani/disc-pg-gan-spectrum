@@ -40,6 +40,7 @@ class Generator:
     def simulate_batch(
         self,
         root_dists: np.ndarray,
+        region_lens: np.ndarray,
         batch_size: int = global_vars.BATCH_SIZE,
         params = [],
         real: bool = False,
@@ -61,7 +62,7 @@ class Generator:
 
         # initialize matrix in which to store data
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
+            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
             dtype=np.float32)
 
         # set up parameters
@@ -86,11 +87,12 @@ class Generator:
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],
                 root_dists[i],
+                region_lens[i],
                 seed,
             )
             # return 3D array
-            region = prep_region(ts, neg1)
-            region_formatted = util.process_region(region)
+            region, dist_vec = prep_region(ts)
+            region_formatted = util.process_region(region, dist_vec, neg1=neg1)
             regions[i] = region_formatted
 
         return regions
@@ -109,20 +111,19 @@ class Generator:
         self.curr_params = new_params
 
 
-def prep_region(ts, neg1=False) -> np.ndarray:
+def prep_region(ts) -> np.ndarray:
     """Gets simulated data ready. Returns a matrix of size
     (n_haps, n_sites, 6)"""
 
     n_sites, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
+    # create the initial multi-dimensional feature array
     X = np.zeros((n_sites, n_haps, 6))
     var_idx = 0
     for var in ts.variants():
         ref = var.alleles[0]
         alts = var.alleles[1:]
-        pos, gts = int(var.site.position), var.genotypes
-        # if ref not in revcomp.keys():
-        #     continue
+        gts = var.genotypes
         for alt_idx, alt in enumerate(alts):
             haps_with_alt = np.where(gts == alt_idx + 1)[0]
             if ref in ("G", "T"):
@@ -133,7 +134,20 @@ def prep_region(ts, neg1=False) -> np.ndarray:
             mutation_idx = global_vars.MUT2IDX[mutation]
             X[var_idx, haps_with_alt, mutation_idx] += 1
         var_idx += 1
-    return X
+
+    # NOTE: we don't apply a strict filter on region size when using HDF5
+    # format for storing genotypes, so our inter-snp distances will always
+    # be a function of the sampled region size (i.e., the largest position)
+    site_table = ts.tables.sites
+    positions = site_table.position.astype(np.int64)
+
+    # create vector of inter-SNP distances
+    dist_vec = [0] 
+    region_len = np.max(positions) - np.min(positions)
+    for i in range(positions.shape[0] - 1):
+        dist_vec.append((positions[i + 1] - positions[i]) / region_len)
+
+    return X, np.array(dist_vec)
 
 # testing
 if __name__ == "__main__":

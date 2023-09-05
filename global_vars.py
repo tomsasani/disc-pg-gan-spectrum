@@ -13,6 +13,8 @@ MUT2IDX = dict(zip(["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"], range(6)))
 REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
 NUC_ORDER = ["A", "C", "G", "T"]
 
+NUM_CHANNELS = 2
+
 
 # section B: overwriting in-file data-------------------------------------------
 

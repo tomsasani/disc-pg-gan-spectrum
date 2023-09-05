@@ -66,7 +66,7 @@ def read_exclude(fh: str) -> IntervalTree:
 
     return tree
 
-def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_alleles: np.ndarray, alternate_alleles: np.ndarray, ancestor: mutyper.Ancestor, chrom: str, n_haps: int) -> np.ndarray:
+def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_alleles: np.ndarray, alternate_alleles: np.ndarray, ancestor: mutyper.Ancestor, chrom: str, n_haps: int,) -> np.ndarray:
 
     out_arr = np.zeros((global_vars.NUM_SNPS, n_haps, 6), dtype=np.float32)
     # loop over SNPs
@@ -87,7 +87,13 @@ def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_al
         mut_i = global_vars.MUT2IDX[">".join(mutation)]
         out_arr[vi, :, mut_i] = haplotypes[vi]
 
-    return out_arr
+    # create vector of inter-SNP distances
+    region_len = np.max(positions) - np.min(positions)
+    dist_vec = [0] 
+    for i in range(positions.shape[0] - 1):
+        dist_vec.append((positions[i + 1] - positions[i]) / region_len)
+
+    return out_arr, np.array(dist_vec)
 
 def get_root_nucleotide_dist(sequence: str):
     """
@@ -241,7 +247,7 @@ class RealDataRandomIterator:
 
         # if we do have an accessible region
         if not excessive_overlap:
-            region = prep_real_region(
+            region, dist_vec = prep_real_region(
                 self.haplotypes[start_idx:end_idx],
                 self.positions[start_idx:end_idx],
                 self.reference_alleles[start_idx:end_idx],
@@ -250,10 +256,10 @@ class RealDataRandomIterator:
                 chromosome,
                 self.num_haplotypes,
             )
-            fixed_region = util.process_region(region, neg1=neg1)
+            fixed_region = util.process_region(region, dist_vec, neg1=neg1)
             sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
             root_dists = get_root_nucleotide_dist(sequence)
-            return fixed_region, root_dists
+            return fixed_region, root_dists, end_pos - start_pos
 
         # try again recursively if not in accessible region
         else:
@@ -269,19 +275,22 @@ class RealDataRandomIterator:
 
         # store the actual haplotype "images" in each batch within this region
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, 6),
+            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
             dtype=np.float32,
         )
 
         # store the root distribution of nucleotides in each region
         root_dists = np.zeros((batch_size, 4))
+        # store the lengths of the sampled regions
+        region_lens = np.zeros(batch_size)
 
         for i in range(batch_size):
-            region_img, region_nucs = self.sample_real_region(neg1)
+            region_img, region_nucs, region_len = self.sample_real_region(neg1)
             regions[i] = region_img
             root_dists[i] = region_nucs
+            region_lens[i] = region_len
 
-        return regions, root_dists
+        return regions, root_dists, region_lens
 
 
 if __name__ == "__main__":

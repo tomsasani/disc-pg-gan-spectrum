@@ -22,7 +22,7 @@ import util
 from real_data_random import Region
 
 # globals for simulated annealing
-NUM_ITER = 300
+NUM_ITER = 150
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -30,12 +30,11 @@ print("NUM_BATCH", NUM_BATCH)
 
 # globals for data
 NUM_CLASSES = 2     # "real" vs "simulated"
-NUM_CHANNELS = 6    # counts of derived alleles corresponding to each mutation type
 print("NUM_SNPS", global_vars.NUM_SNPS)
 
 print("L", global_vars.L)
 print("NUM_CLASSES", NUM_CLASSES)
-print("NUM_CHANNELS", NUM_CHANNELS)
+print("NUM_CHANNELS", global_vars.NUM_CHANNELS)
 
 def main():
     """Parse args and run simulated annealing"""
@@ -200,7 +199,7 @@ class PG_GAN:
             1,
             iterator.num_haplotypes,
             global_vars.NUM_SNPS,
-            NUM_CHANNELS,
+            global_vars.NUM_CHANNELS,
         ))
         self.discriminator.summary()
 
@@ -246,16 +245,15 @@ class PG_GAN:
         """
 
         for epoch in tqdm.tqdm(range(num_batches)):
-            # sample a batch of real regions of the specified region_len
-            real_regions, real_root_dists = self.iterator.real_batch(
+            # sample a batch of real regions
+            real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(
                 neg1=True,
-                #region_len=global_vars.L,
             )
             # perform a training step. in a single training step,
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
-            real_acc, fake_acc, disc_loss = self.train_step(real_regions, real_root_dists)
+            real_acc, fake_acc, disc_loss = self.train_step(real_regions, real_root_dists, real_region_lens)
 
             # every 100th epoch, print the accuracy
             if (epoch+1) % 100 == 0:
@@ -284,22 +282,23 @@ class PG_GAN:
         # that is close to a real region.
         root_dists = self.iterator.base_root_dist
         root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
-        generated_regions = self.generator.simulate_batch(root_dists_tiled, params=proposed_params)
+        region_lens = np.array([50_000] * global_vars.BATCH_SIZE)
+        generated_regions = self.generator.simulate_batch(root_dists_tiled, region_lens, params=proposed_params)
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
 
-    def train_step(self, real_regions, real_root_dists):
+    def train_step(self, real_regions, real_root_dists, real_region_lens):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
-            generated_regions = self.generator.simulate_batch(real_root_dists)
-            # f, axarr = plt.subplots(6, 2, figsize=(12, 10))
-            # for channel_i in np.arange(6):
+            generated_regions = self.generator.simulate_batch(real_root_dists, real_region_lens)
+            # f, axarr = plt.subplots(2, 2, figsize=(12, 10))
+            # for channel_i in np.arange(2):
             #     sns.heatmap(real_regions[0][:, :, channel_i], ax=axarr[channel_i, 0])
             #     sns.heatmap(generated_regions[0][:, :, channel_i], ax=axarr[channel_i, 1])
             # f.tight_layout()
