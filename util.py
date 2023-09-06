@@ -71,7 +71,9 @@ def process_region(X: np.ndarray, dist_vec: np.ndarray, neg1: bool = True) -> np
     if mid >= half_S:
         # add first channels of mutation spectra
         middle_portion = X[mid - half_S:mid + other_half_S, :, :]
+        #region[:, :, :-1] = major_minor(np.transpose(middle_portion, (1, 0, 2)), neg1)
         region[:, :, :-1] = major_minor(sum_across_channels(np.transpose(middle_portion, (1, 0, 2))), neg1)
+
         # tile the inter-snp distances down the haplotypes
         distances = np.tile(dist_vec[mid - half_S:mid + other_half_S], (n_haps, 1))
         # add final channel of inter-snp distances
@@ -81,8 +83,10 @@ def process_region(X: np.ndarray, dist_vec: np.ndarray, neg1: bool = True) -> np
         if n_sites % 2 == 1: other_half_S += 1
         # use the complete genotype array
         # but just add it to the center of the main array
+        # region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(np.transpose(
+        #            X, (1, 0, 2)), neg1)
         region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(
-                   X, (1, 0, 2))), neg1)
+                   X, (1, 0, 2))), neg1,)
         # tile the inter-snp distances down the haplotypes
         distances = np.tile(dist_vec, (n_haps, 1))
         # add final channel of inter-snp distances

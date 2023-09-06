@@ -140,13 +140,14 @@ def prep_region(ts) -> np.ndarray:
     # be a function of the sampled region size (i.e., the largest position)
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)
-
     # create vector of inter-SNP distances
-    dist_vec = [0] 
-    region_len = np.max(positions) - np.min(positions)
-    for i in range(positions.shape[0] - 1):
-        dist_vec.append((positions[i + 1] - positions[i]) / region_len)
-
+    # TODO: hacky
+    if positions.shape[0] > 0:
+        dist_vec = [0] 
+        region_len = np.max(positions) - np.min(positions)
+        for i in range(positions.shape[0] - 1):
+            dist_vec.append((positions[i + 1] - positions[i]) / region_len)
+    else: dist_vec = []
     return X, np.array(dist_vec)
 
 # testing

@@ -22,7 +22,7 @@ import util
 from real_data_random import Region
 
 # globals for simulated annealing
-NUM_ITER = 150
+NUM_ITER = 300
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -352,7 +352,7 @@ class PG_GAN:
             tf.math.add(real_entropy, fake_entropy),
         )  
 
-        return total_loss - entropy, real_acc, fake_acc
+        return total_loss, real_acc, fake_acc
 
 
 ################################################################################
