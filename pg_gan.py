@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import tqdm
+import random
 
 # our imports
 import discriminator
@@ -111,21 +112,30 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         loss_best = float('inf')
         # currently, trying all parameters!
         for k in range(len(parameters)):
+            #k = random.choice(range(len(parameters))) # random param
             # try 10 iterations of parameter value selection for each param
             for _ in range(10):
                 s_proposal = [v for v in s_current]
                 s_proposal[k] = parameters[k].proposal(s_current[k], T)
+
+                # can update all the parameters at once, or choose one at a time
+                #s_proposal = [parameters[k].proposal(s_current[k], T) for k in
+                #    range(len(parameters))]
+
                 # for each parameter value, figure out the Generator loss.
                 # that is, using the proposed parameter values, generate some fake
                 # data (with no real data paired alongside it at all) and see how
                 # good our discriminator is at telling that it's fake.
                 loss_proposal = pg_gan.generator_loss(s_proposal)
+                #print (f"Best loss in this iteration is: {loss_best}")
+                    
                 # if our Generator's loss is better than the best so far *in this iteration*, use these
                 # new parameter values as the parameters for retraining
                 if loss_proposal < loss_best: # minimizing loss
+                    print (f"For parameter {parameters[k].name}, proposed value of {s_proposal[k]}, improves loss to {loss_proposal} from {loss_best}.")
                     loss_best = loss_proposal
                     s_best = s_proposal
-
+        
         # figure out whether the Generator loss in this iteration is better than the best
         # loss observed so far *in any iteration*. if it is, set the "probability that we
         # should accept this set of parameters for the Generator" to be 1.
