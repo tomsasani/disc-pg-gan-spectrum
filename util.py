@@ -8,6 +8,8 @@ Date: 9/27/22
 import numpy as np
 import argparse
 import sys
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # our imports
 import generator
@@ -16,8 +18,13 @@ import param_set
 import real_data_random
 import simulation
 
+def sort_by_genetic_similarity():
+    pass
+
 def sum_across_channels(X: np.ndarray) -> np.ndarray:
-    return np.expand_dims(np.sum(X, axis=2), axis=2)
+    summed = np.sum(X, axis=2)
+    #assert np.max(summed) == 1
+    return np.expand_dims(summed, axis=2)
 
 def sum_across_windows(X: np.ndarray) -> np.ndarray:
 
@@ -36,7 +43,16 @@ def sum_across_windows(X: np.ndarray) -> np.ndarray:
         rel_regions_sum[:, i, :] = derived_sum_rescaled
     return rel_regions_sum
 
-def process_region(X: np.ndarray, dist_vec: np.ndarray, neg1: bool = True) -> np.ndarray:
+
+def reorder(X: np.ndarray):
+    return np.transpose(X, (1, 0, 2))
+
+
+def process_region(
+    X: np.ndarray,
+    dist_vec: np.ndarray,
+    neg1: bool = True,
+) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
     from either generated or real data. First, subset it to contain global_vars.NUM_SNPS
@@ -55,43 +71,46 @@ def process_region(X: np.ndarray, dist_vec: np.ndarray, neg1: bool = True) -> np
     # multi-dimensional array
     n_sites, n_haps = X.shape[:-1]
 
+    assert n_sites == dist_vec.shape[0]
+
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
     mid = n_sites // 2
 
-    S = global_vars.NUM_SNPS
-
-    half_S = S // 2
-    other_half_S = half_S
+    half_S = global_vars.NUM_SNPS // 2
 
     # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
-    region = np.zeros((n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS), dtype=np.float32)
+    region = np.zeros(
+        (n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
+        dtype=np.float32,
+    )
 
-    # if 
+    # if we have more than the necessary number of SNPs
     if mid >= half_S:
+        #print (f"Our array has {n_sites} SNPS, so only adding from {mid - half_S} to {mid + half_S}")
         # add first channels of mutation spectra
-        middle_portion = X[mid - half_S:mid + other_half_S, :, :]
+        middle_portion = reorder(X[mid - half_S:mid + half_S, :, :])
+        
         #region[:, :, :-1] = major_minor(np.transpose(middle_portion, (1, 0, 2)), neg1)
-        region[:, :, :-1] = major_minor(sum_across_channels(np.transpose(middle_portion, (1, 0, 2))), neg1)
-
+        region[:, :, :-1] = major_minor(sum_across_channels(middle_portion), neg1)
         # tile the inter-snp distances down the haplotypes
-        distances = np.tile(dist_vec[mid - half_S:mid + other_half_S], (n_haps, 1))
+        distances = np.tile(dist_vec[mid - half_S:mid + half_S], (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, :, -1] = distances
 
     else:
-        if n_sites % 2 == 1: other_half_S += 1
+        other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
+        #print (f"Our array only has {n_sites} SNPS, so adding from {half_S - mid} to {mid + other_half_S}")
         # use the complete genotype array
         # but just add it to the center of the main array
         # region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(np.transpose(
         #            X, (1, 0, 2)), neg1)
-        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(
-                   X, (1, 0, 2))), neg1,)
+        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(reorder(X)), neg1,)
         # tile the inter-snp distances down the haplotypes
         distances = np.tile(dist_vec, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, half_S - mid:mid + other_half_S, -1] = distances
-    
+
     # convert anc/der alleles to -1, 1
     return region
 
@@ -114,19 +133,18 @@ def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    # n_haps, n_sites, n_channels = matrix.shape
-    # n = matrix.shape[0]
-    # for site_i in range(n_sites):
-    #     for mut_i in range(n_channels):
-    #         # if greater than 50% of haplotypes are ALT, reverse
-    #         # the REF/ALT polarization
-    #         if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2): 
-    #             matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
+    n_haps, n_sites, n_channels = matrix.shape
+    for site_i in range(n_sites):
+        for mut_i in range(n_channels):
+            # if greater than 50% of haplotypes are ALT, reverse
+            # the REF/ALT polarization
+            if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2):
+                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
     # option to convert from 0/1 to -1/+1
     if neg1:
         matrix[matrix == 0] = -1
-    # residual numbers higher than one may remain even though we restricted to
-    # biallelic
+
+    # matrix[matrix > 1] = 1
     return matrix
 
 def prep_real(gt, snp_start, snp_end, indv_start, indv_end):
@@ -161,7 +179,7 @@ def parse_args():
         help="path to ancestral reference",
         required=True,
     )
-    
+
     p.add_argument(
         '--disc',
         type=str,
@@ -226,7 +244,7 @@ def process_args(args, summary_stats = False):
 
     # always using the EXP model, with a single population
     num_pops = 1
-    simulator = simulation.simulate_exp
+    simulator = simulation.simulate_isolated
 
     if (global_vars.FILTER_SIMULATED or global_vars.FILTER_REAL_DATA):
         print("FILTERING SINGLETONS")

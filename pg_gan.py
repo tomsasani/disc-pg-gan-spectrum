@@ -63,8 +63,8 @@ def main():
         tf.saved_model.save(disc, "saved_model/" + args.disc)
         print("discriminator saved")
 
-    print(posterior)
-    print(loss_lst)
+    #print(posterior)
+    #print(loss_lst)
 
 ################################################################################
 # SIMULATED ANNEALING
@@ -79,24 +79,24 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
 
     # find starting point through pre-training (update generator in method)
     if not toy:
-        s_current = pg_gan.disc_pretraining(800)
+        param_current = pg_gan.disc_pretraining(800)
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
         pg_gan.disc_pretraining(1) # for testing purposes
-        s_current = [param.start() for param in pg_gan.parameters]
-        pg_gan.generator.update_params(s_current)
+        param_current = [param.start() for param in pg_gan.parameters]
+        pg_gan.generator.update_params(param_current)
         print ("COMPLETED DISCRIMINATOR PRETRAINING")
 
     # after discriminator pre-training, figure out our Generator loss.
     # specifically, generate a bunch of fake data using whatever the current
     # parameter values are, and figure out how good the Discriminator is at
     # figuring out that it's all fake.
-    loss_curr = pg_gan.generator_loss(s_current)
-    print("params, loss", s_current, loss_curr)
+    loss_current = pg_gan.generator_loss(param_current)
+    print("Current params, Current generator loss", param_current, loss_current)
 
-    posterior = [s_current]
-    loss_lst = [loss_curr]
+    posterior = [param_current]
+    loss_lst = [loss_current]
 
     # simulated-annealing iterations
     num_iter = 5 if toy else NUM_ITER
@@ -107,45 +107,53 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         print("\nITER", i)
         print("time", datetime.datetime.now().time())
         T = temperature(i, num_iter) # reduce width of proposal over time
-        # propose 10 updates per param and pick the best one
-        s_best = None
-        loss_best = float('inf')
+
+        # keep track of the best parameter values we encounter in this iteration
+        # and the lowest Generator loss we get using those values
+        best_iteration_params = None
+        best_iteration_loss = float('inf')
         # currently, trying all parameters!
+        # NOTE: for each parameter, we test 10 possible values and measure the
+        # generator loss each time. when testing each of the 10 possible parameter
+        # values, we *hold all other parameters constant at the values assigned to
+        # them in the previous iteration*. we then pick the single value out of the
+        # 10 * len(parameters) possible trials that minimized the generator loss. as
+        # mentioned in the paper, this has the effect of only modifying a single parameter
+        # in each iteration.
         for k in range(len(parameters)):
-            #k = random.choice(range(len(parameters))) # random param
+            # k = random.choice(range(len(parameters))) # random param
             # try 10 iterations of parameter value selection for each param
             for _ in range(10):
-                s_proposal = [v for v in s_current]
-                s_proposal[k] = parameters[k].proposal(s_current[k], T)
+                # get the parameters and corresponding values that were proposed in the previous iteration
+                # (i.e., that minimized the generator loss)
+                param_proposal = [v for v in param_current]
+                # propose a new value for this parameter, *holding all other parameter values to
+                # be the values they were set at in the previous iteration
+                param_proposal[k] = parameters[k].proposal(param_current[k], T)
 
-                # can update all the parameters at once, or choose one at a time
-                #s_proposal = [parameters[k].proposal(s_current[k], T) for k in
-                #    range(len(parameters))]
-
-                # for each parameter value, figure out the Generator loss.
+                # figure out the Generator loss using the modified parameter values.
                 # that is, using the proposed parameter values, generate some fake
                 # data (with no real data paired alongside it at all) and see how
                 # good our discriminator is at telling that it's fake.
-                loss_proposal = pg_gan.generator_loss(s_proposal)
-                #print (f"Best loss in this iteration is: {loss_best}")
-                    
-                # if our Generator's loss is better than the best so far *in this iteration*, use these
-                # new parameter values as the parameters for retraining
-                if loss_proposal < loss_best: # minimizing loss
-                    print (f"For parameter {parameters[k].name}, proposed value of {s_proposal[k]}, improves loss to {loss_proposal} from {loss_best}.")
-                    loss_best = loss_proposal
-                    s_best = s_proposal
-        
+                loss_proposal = pg_gan.generator_loss(param_proposal)
+
+                # if our Generator's loss is better than the best so far *in this iteration*, keep track of
+                # both the loss and current parameter values
+                if loss_proposal < best_iteration_loss:
+                    print (f"For parameter {parameters[k].name}, proposed value of {param_proposal[k]}, improves loss to {loss_proposal} from {best_iteration_loss}.")
+                    best_iteration_loss = loss_proposal
+                    best_iteration_params = param_proposal
+
         # figure out whether the Generator loss in this iteration is better than the best
         # loss observed so far *in any iteration*. if it is, set the "probability that we
         # should accept this set of parameters for the Generator" to be 1.
-        if loss_best <= loss_curr:
+        if best_iteration_loss <= loss_current:
             p_accept = 1
         # otherwise, set the "probability that we should accept this set of parameters for the Generator"
         # to be a float that captures the degree to which the current loss compares to the best loss. basically,
         # the worse this iteration looks compared to previous iterations, the lower this probability should be.
         else:
-            p_accept = (loss_curr / loss_best) * T
+            p_accept = (loss_current / best_iteration_loss) * T
         # draw a random float from a uniform dist [0, 1). if the float is less than the "probability" defined
         # above, we'll accept the current set of parameters.
         rand = np.random.rand()
@@ -156,12 +164,12 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
         # if we accept the current set of parameters, let's retrain our model!
         if accept:
             print("ACCEPTED")
-            s_current = s_best
+            param_current = best_iteration_params
+            loss_current = best_iteration_loss
             # NOTE: should this be pg_gan.generator.update_params() ?
             # update the parameters of the Generator to reflect the best set of parameters in the iteration.
-            generator.update_params(s_current)
-            real_acc, fake_acc = pg_gan.train_sa(NUM_BATCH)
-            loss_curr = loss_best
+            pg_gan.generator.update_params(param_current)
+            real_acc, fake_acc = pg_gan.train_sa(NUM_BATCH, iteration=i)
 
         # if we shouldn't accept the current set of parameters for the Generator, move on to the
         # next iteration.
@@ -169,19 +177,18 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
             print("NOT ACCEPTED")
 
         for pi, p in enumerate(parameters):
-            out_df.append({"epoch": i, "param": p.name, "generator_loss": loss_best, "param_value": s_best[pi], "Real acc": real_acc, "Fake acc": fake_acc})
+            out_df.append({"epoch": i, "param": p.name, "generator_loss": best_iteration_loss, "param_value": best_iteration_params[pi], "Real acc": real_acc, "Fake acc": fake_acc})
 
-        print("T, p_accept, rand, s_current, loss_curr", end=" ")
-        print (f"Temperature: {T}, Generator loss: {loss_curr}, Real acc: {real_acc}, Fake acc: {fake_acc}")
-        print(T, p_accept, rand, s_current, loss_curr)
-        posterior.append(s_current)
-        loss_lst.append(loss_curr)
+        #print("T, p_accept, rand, s_current, loss_curr", end=" ")
+        print (f"Temperature: {T}, Current params: {param_current}, Generator loss: {loss_current}, Real acc: {real_acc}, Fake acc: {fake_acc}")
+        posterior.append(param_current)
+        loss_lst.append(loss_current)
 
     out_df = pd.DataFrame(out_df)
-    out_df.to_csv("summary.csv")
+    out_df.to_csv(f"summary.{seed}.csv", index=False)
     g = sns.FacetGrid(data=out_df, row="param", sharey=False, sharex=True, height=3, aspect=4)
     g.map(sns.lineplot, "epoch", "param_value")
-    g.savefig("params.png", dpi=200)
+    g.savefig(f"params.{seed}.png", dpi=200)
 
     return posterior, loss_lst
 
@@ -249,7 +256,7 @@ class PG_GAN:
         self.generator.update_params(s_best)
         return s_best
 
-    def train_sa(self, num_batches: int):
+    def train_sa(self, num_batches: int, iteration: int = 0):
         """
         Main training function. Comprises a single epoch with `num_batches`.
         """
@@ -263,7 +270,15 @@ class PG_GAN:
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
-            real_acc, fake_acc, disc_loss = self.train_step(real_regions, real_root_dists, real_region_lens)
+
+            outname = f"imgs/{iteration}.png" if (epoch + 1) % 100 == 0 else None
+
+            real_acc, fake_acc, disc_loss = self.train_step(
+                real_regions,
+                real_root_dists,
+                real_region_lens,
+                outname=outname,
+            )
 
             # every 100th epoch, print the accuracy
             if (epoch+1) % 100 == 0:
@@ -292,7 +307,7 @@ class PG_GAN:
         # that is close to a real region.
         root_dists = self.iterator.base_root_dist
         root_dists_tiled = np.tile(root_dists, (global_vars.BATCH_SIZE, 1),)
-        region_lens = np.array([50_000] * global_vars.BATCH_SIZE)
+        region_lens = np.array([global_vars.L] * global_vars.BATCH_SIZE)
         generated_regions = self.generator.simulate_batch(root_dists_tiled, region_lens, params=proposed_params)
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
@@ -300,19 +315,25 @@ class PG_GAN:
 
         return loss.numpy()
 
-    def train_step(self, real_regions, real_root_dists, real_region_lens):
+    def train_step(self, real_regions, real_root_dists, real_region_lens, outname = None):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
             generated_regions = self.generator.simulate_batch(real_root_dists, real_region_lens)
-            # f, axarr = plt.subplots(2, 2, figsize=(12, 10))
-            # for channel_i in np.arange(2):
-            #     sns.heatmap(real_regions[0][:, :, channel_i], ax=axarr[channel_i, 0])
-            #     sns.heatmap(generated_regions[0][:, :, channel_i], ax=axarr[channel_i, 1])
-            # f.tight_layout()
-            # f.savefig("regions.png")
+            if outname is not None:
+                to_plot = np.random.randint(0, real_regions.shape[0], size=4)
+                f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 8, figsize=(24, global_vars.NUM_CHANNELS * 4))
+                for channel_i in np.arange(global_vars.NUM_CHANNELS):
+                    for idx, plot_i in enumerate(to_plot):
+                        sns.heatmap(real_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=False)
+                        sns.heatmap(generated_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=False)
+                for idx in range(4):
+                    axarr[0, idx * 2].set_title("R")
+                    axarr[0, (idx * 2) + 1].set_title("G")
+                f.tight_layout()
+                f.savefig(outname)
             # predict class labels (fake or real) for the real regions
             real_output = self.discriminator(real_regions, training=True)
             # do the same for the fake/generated regions
@@ -360,9 +381,9 @@ class PG_GAN:
         entropy = tf.math.scalar_mul(
             0.001 / 2,
             tf.math.add(real_entropy, fake_entropy),
-        )  
+        )
 
-        return total_loss, real_acc, fake_acc
+        return total_loss - entropy, real_acc, fake_acc
 
 
 ################################################################################
