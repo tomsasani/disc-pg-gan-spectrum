@@ -2,6 +2,7 @@ import allel
 
 CHROMS = list(map(str, range(1, 23)))
 CHROMS = [f"chr{c}" for c in CHROMS]
+#CHROMS = ["chr1"]
 
 rule all:
     input:
@@ -22,10 +23,18 @@ rule combine_vcf:
     input:
         expand("data/simulated/vcf/{chrom}.simulated.vcf", chrom=CHROMS)
     output:
-        "data/simulated/simulated.vcf.gz"
+        "data/simulated/simulated.unfiltered.vcf.gz"
     shell:
         """
         bcftools concat -Oz -o {output} {input}
+        """
+
+rule filter_vcf:
+    input: "data/simulated/simulated.unfiltered.vcf.gz"
+    output: "data/simulated/simulated.vcf.gz"
+    shell:
+        """
+        bcftools view -m2 -M2 -Oz -o {output} {input}
         """
 
 rule combine_ref:
