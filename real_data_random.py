@@ -20,6 +20,8 @@ import tqdm
 import mutyper
 from collections import Counter
 import h5py
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # our imports
 import global_vars
@@ -66,32 +68,56 @@ def read_exclude(fh: str) -> IntervalTree:
 
     return tree
 
-def prep_real_region(haplotypes: np.ndarray, positions: np.ndarray, reference_alleles: np.ndarray, alternate_alleles: np.ndarray, ancestor: mutyper.Ancestor, chrom: str, n_haps: int,) -> np.ndarray:
 
-    out_arr = np.zeros((global_vars.NUM_SNPS, n_haps, 6), dtype=np.float32)
+def prep_real_region(
+    haplotypes: np.ndarray,
+    positions: np.ndarray,
+    reference_alleles: np.ndarray,
+    alternate_alleles: np.ndarray,
+    ancestor: mutyper.Ancestor,
+    chrom: str,
+    n_haps: int,
+) -> np.ndarray:
+
+    n_snps = positions.shape[0]
+    assert n_snps == global_vars.NUM_SNPS
+
+    out_arr = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
+
     # loop over SNPs
-    for vi in range(global_vars.NUM_SNPS):
+    for vi in range(n_snps):
         # only include mutations that occur at a confidently polarized
         # nucleotide in the ancestral reference genome.
         # NOTE: we do this so that we only include mutations that occurred
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
-        # NOTE: always assuming that we're only dealing with biallelics   
+        # NOTE: always assuming that we're only dealing with biallelics
         mutation = ancestor.mutation_type(
             chrom,
             int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
             reference_alleles[vi].decode("utf-8"),
             alternate_alleles[vi][0].decode("utf-8"),
         )
-        if None in mutation: continue
+        #if None in mutation: continue
         mut_i = global_vars.MUT2IDX[">".join(mutation)]
         out_arr[vi, :, mut_i] = haplotypes[vi]
 
+    # remove sites that are non-segregating (i.e., if we didn't
+    # add any information to them because they were multi-allelic
+    # or because they were a silent mutation)
+    summed_across_channels = np.sum(out_arr, axis=2)
+    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
+    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    # if seg.shape[0] < n_snps:
+    #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the real data.")
+    out_arr = out_arr[seg, :, :]
+    filtered_positions = positions[seg]
+
     # create vector of inter-SNP distances
-    region_len = np.max(positions) - np.min(positions)
-    dist_vec = [0] 
-    for i in range(positions.shape[0] - 1):
-        dist_vec.append((positions[i + 1] - positions[i]) / region_len)
+    region_len = np.max(filtered_positions) - np.min(filtered_positions)
+    dist_vec = [0]
+    for i in range(filtered_positions.shape[0] - 1):
+        dist_vec.append((filtered_positions[i + 1] - filtered_positions[i]) / region_len)
 
     return out_arr, np.array(dist_vec)
 
@@ -131,10 +157,12 @@ class RealDataRandomIterator:
         # output: ['GT'] ['CHROM', 'POS']
         print(list(callset['calldata'].keys()),list(callset['variants'].keys()))
 
+        # same length as pos_all, noting chrom for each variant (sorted)
+        self.chromosomes = callset['variants/CHROM']
+
         raw_gts = callset['calldata/GT']
         newshape = (raw_gts.shape[0], -1)
         self.haplotypes = np.reshape(raw_gts, newshape)
-        #self.haplotypes = raw_gts.flatten()
         self.haplotypes[self.haplotypes < 0] = 0
         print("raw", raw_gts.shape)
         print ("new", self.haplotypes.shape)
@@ -142,10 +170,9 @@ class RealDataRandomIterator:
         self.positions = callset['variants/POS']
         self.reference_alleles = callset['variants/REF']
         self.alternate_alleles = callset['variants/ALT']
-        # same length as pos_all, noting chrom for each variant (sorted)
-        self.chromosomes = callset['variants/CHROM']
+
         self.num_haplotypes = self.haplotypes.shape[1]
-        print 
+
 
         # read in ancestral sequence using mutyper
         ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
@@ -224,6 +251,7 @@ class RealDataRandomIterator:
 
         # figure out the chromosome on which we're starting
         chromosome, start_pos = self.chromosomes[start_idx].decode("utf-8"), self.positions[start_idx]
+        if chromosome != "chr1": return self.sample_real_region(neg1)
 
         # if the chromosome isn't an autosome, try again
         if autosomes_only and chromosome not in self.autosomes:

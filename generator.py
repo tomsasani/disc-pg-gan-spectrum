@@ -7,7 +7,8 @@ Date: 9/27/22
 # python imports
 import numpy as np
 from numpy.random import default_rng
-
+import matplotlib.pyplot as plt 
+import seaborn as sns
 # our imports
 import global_vars
 import param_set
@@ -74,6 +75,8 @@ class Generator:
         else:
             sim_params.update(self.param_names, params)
 
+        #print (f"""Params used for generator loss: N1 = {sim_params.N1.value}, N2 = {sim_params.N2.value}, T1 = {sim_params.T1.value}, T2 = {sim_params.T2.value}, mu = {sim_params.mu.value}, rho = {sim_params.rho.value}""")
+
         # simulate each region
         for i in range(batch_size):
             # set random seed
@@ -119,34 +122,50 @@ def prep_region(ts) -> np.ndarray:
 
     # create the initial multi-dimensional feature array
     X = np.zeros((n_sites, n_haps, 6))
-    var_idx = 0
-    for var in ts.variants():
+    for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alts = var.alleles[1:]
         gts = var.genotypes
+        # ignore multi-allelics
+        if len(alts) > 1: 
+            #print ("Found a multi-allelic!")
+            continue
         for alt_idx, alt in enumerate(alts):
             haps_with_alt = np.where(gts == alt_idx + 1)[0]
             if ref in ("G", "T"):
                 ref, alt = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
-            # TODO: deal with silent mutations
-            if ref == alt: continue
+            # shouldn't be any silent mutations given transition matrix, but make sure
+            # we don't include them
+            if ref == alt: 
+                #print ("Encountered a silent mutation!")
+                continue
             mutation = ">".join([ref, alt])
             mutation_idx = global_vars.MUT2IDX[mutation]
+            
             X[var_idx, haps_with_alt, mutation_idx] += 1
-        var_idx += 1
 
+    # remove sites that are non-segregating (i.e., if we didn't
+    # add any information to them because they were multi-allelic
+    # or because they were a silent mutation)
+    summed_across_channels = np.sum(X, axis=2)
+    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
+    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    # if seg.shape[0] < n_sites:
+    #    print (f"Found {n_sites - seg.shape[0]} non-segregating sites in the fake data.")
+    X = X[seg, :, :]
     # NOTE: we don't apply a strict filter on region size when using HDF5
     # format for storing genotypes, so our inter-snp distances will always
     # be a function of the sampled region size (i.e., the largest position)
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)
+    filtered_positions = positions[seg]
     # create vector of inter-SNP distances
     # TODO: hacky
-    if positions.shape[0] > 0:
+    if filtered_positions.shape[0] > 0:
         dist_vec = [0] 
-        region_len = np.max(positions) - np.min(positions)
-        for i in range(positions.shape[0] - 1):
-            dist_vec.append((positions[i + 1] - positions[i]) / region_len)
+        region_len = np.max(filtered_positions) - np.min(filtered_positions)
+        for i in range(filtered_positions.shape[0] - 1):
+            dist_vec.append((filtered_positions[i + 1] - filtered_positions[i]) / region_len)
     else: dist_vec = []
     return X, np.array(dist_vec)
 
