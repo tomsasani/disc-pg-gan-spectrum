@@ -27,7 +27,7 @@ def main(args):
 
     CHROMS = list(map(str, range(1, 23)))
     CHROMS = [f"chr{c}" for c in CHROMS]
-    #CHROMS = ["chr1"]
+    CHROMS = ["chr1"]
     # simulate a bunch of chromosomes
     for chrom in tqdm.tqdm(CHROMS):
         # simulate the reference
