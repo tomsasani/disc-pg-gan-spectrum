@@ -18,6 +18,15 @@ import param_set
 import real_data_random
 import simulation
 
+def inter_snp_distances(positions: np.ndarray, norm_len: int) -> np.ndarray:
+    if positions.shape[0] > 0:
+        dist_vec = [0] 
+        for i in range(positions.shape[0] - 1):
+            # NOTE: inter-snp distances always normalized to simulated region size
+            dist_vec.append((positions[i + 1] - positions[i]) / norm_len)
+    else: dist_vec = []
+    return np.array(dist_vec)
+
 def sort_by_genetic_similarity():
     pass
 
@@ -50,8 +59,8 @@ def reorder(X: np.ndarray):
 
 def process_region(
     X: np.ndarray,
-    dist_vec: np.ndarray,
-    neg1: bool = True,
+    positions: np.ndarray,
+    norm_len: int,
 ) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
@@ -62,16 +71,22 @@ def process_region(
     Zero-pad if necessary.
 
     Args:
-        X (np.ndarray): _description_
+        X (np.ndarray): feature array of shape (n_sites, n_haps, n_channels - 1)
+        positions (np.ndarray): array of positions that correspond to each of the
+            n_sites in the feature array.
 
     Returns:
         np.ndarray: _description_
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps = X.shape[:-1]
+    n_sites, n_haps = X.shape
+    # make sure we have exactly as many positions as there are sites
+    assert n_sites == positions.shape[0]
+    # get inter-SNP distances, relative to the simualted region size
+    distances = inter_snp_distances(positions, norm_len)
 
-    assert n_sites == dist_vec.shape[0]
+    #print (f"Processing distances with region length of {norm_len}")
 
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
@@ -87,29 +102,23 @@ def process_region(
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
-        #print (f"Our array has {n_sites} SNPS, so only adding from {mid - half_S} to {mid + half_S}")
         # add first channels of mutation spectra
-        middle_portion = reorder(X[mid - half_S:mid + half_S, :, :])
-        
-        #region[:, :, :-1] = major_minor(np.transpose(middle_portion, (1, 0, 2)), neg1)
-        region[:, :, :-1] = major_minor(sum_across_channels(middle_portion), neg1)
+        middle_X = np.transpose(X[mid - half_S:mid + half_S, :], (1, 0))
+        region[:, :, :-1] = np.expand_dims(major_minor(middle_X), axis=2)
         # tile the inter-snp distances down the haplotypes
-        distances = np.tile(dist_vec[mid - half_S:mid + half_S], (n_haps, 1))
+        distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
         # add final channel of inter-snp distances
-        region[:, :, -1] = distances
+        region[:, :, -1] = distances_tiled
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
-        #print (f"Our array only has {n_sites} SNPS, so adding from {half_S - mid} to {mid + other_half_S}")
         # use the complete genotype array
         # but just add it to the center of the main array
-        # region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(np.transpose(
-        #            X, (1, 0, 2)), neg1)
-        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(reorder(X)), neg1,)
+        region[:, half_S - mid:mid + other_half_S, :-1] = np.expand_dims(major_minor(np.transpose(X, (1, 0))), axis=2)
         # tile the inter-snp distances down the haplotypes
-        distances = np.tile(dist_vec, (n_haps, 1))
+        distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
-        region[:, half_S - mid:mid + other_half_S, -1] = distances
+        region[:, half_S - mid:mid + other_half_S, -1] = distances_tiled
 
     # convert anc/der alleles to -1, 1
     return region
@@ -129,38 +138,23 @@ def parse_params(param_input):
     return parameters
 
 
-def major_minor(matrix, neg1):
+def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites, n_channels = matrix.shape
+    n_haps, n_sites = matrix.shape
     for site_i in range(n_sites):
-        for mut_i in range(n_channels):
+        #for mut_i in range(n_channels):
             # if greater than 50% of haplotypes are ALT, reverse
             # the REF/ALT polarization
-            if np.count_nonzero(matrix[:,site_i, mut_i] > 0) > (n_haps / 2):
-                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
+        if np.count_nonzero(matrix[:, site_i] > 0) > (n_haps / 2):
+            matrix[:, site_i] = 1 - matrix[:, site_i]
     # option to convert from 0/1 to -1/+1
-    if neg1:
-        matrix[matrix == 0] = -1
+    matrix[matrix == 0] = -1
 
     # matrix[matrix > 1] = 1
     return matrix
 
-def prep_real(gt, snp_start, snp_end, indv_start, indv_end):
-    """Slice out desired region and unravel haplotypes"""
-    region = gt[snp_start:snp_end, indv_start:indv_end, :]
-    both_haps = np.concatenate((region[:,:,0], region[:,:,1]), axis=1)
-    return both_haps
-
-def filter_nonseg(region):
-    """Filter out non-segregating sites in this region"""
-    nonseg0 = np.all(region == 0, axis=1) # row all 0
-    nonseg1 = np.all(region == 1, axis=1) # row all 1
-    keep0 = np.invert(nonseg0)
-    keep1 = np.invert(nonseg1)
-    filter = np.logical_and(keep0, keep1)
-    return filter
 
 def parse_args():
     """Parse command line arguments."""
@@ -219,18 +213,14 @@ def parse_args():
     return args
 
 
-def process_args(args, summary_stats = False):
+def process_args(args):
 
     # parameter defaults
-    all_params = param_set.ParamSet()
     parameters = parse_params(args.params) # desired params
     param_names = [p.name for p in parameters]
 
-    real = False
-    #ss_total = global_vars.DEFAULT_SAMPLE_SIZE
-
     # initialize the Iterator object, which will iterate over
-    # the VCF and grab regions of the size specified in global_vars.L
+    # the VCF and grab regions with NUM_SNPS
     iterator = real_data_random.RealDataRandomIterator(
         hdf_fh=args.data,
         ref_fh=args.ref,

@@ -89,7 +89,7 @@ def simulate_exp(params, sample_sizes, root_distribution, region_length, seed):
 
     return mts
 
-def simulate_isolated(params, sample_sizes, root_distribution, region_length, seed):
+def simulate_isolated(params, sample_sizes, region_length, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -105,19 +105,19 @@ def simulate_isolated(params, sample_sizes, root_distribution, region_length, se
     )
 
     # define mutation model
-    mutation_model = parameterize_mutation_model(root_distribution)
+    #mutation_model = parameterize_mutation_model(root_distribution)
 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        model=mutation_model,
+        #model=mutation_model,
         random_seed=seed,
         discrete_genome=True,
     )
 
     return mts
 
-# def simulate_im(params, sample_sizes, seed, reco):
+# def simulate_im(params, sample_sizes, region_length, seed):
 #     """Note this is a 2 population model"""
 #     assert len(sample_sizes) == 2
 
@@ -128,11 +128,11 @@ def simulate_isolated(params, sample_sizes, root_distribution, region_length, se
 #     N_anc = params.N_anc.value
 #     mig = params.mig.value
 
-#     # population_configurations = [
-#     #     msprime.PopulationConfiguration(sample_size=sample_sizes[0],
-#     #         initial_size = N1),
-#     #     msprime.PopulationConfiguration(sample_size=sample_sizes[1],
-#     #         initial_size = N2)]
+#     population_configurations = [
+#         msprime.PopulationConfiguration(sample_size=sample_sizes[0],
+#             initial_size = N1),
+#         msprime.PopulationConfiguration(sample_size=sample_sizes[1],
+#             initial_size = N2)]
     
 #     demography = msprime.Demography()
 #     demography.add_population(name="A", initial_size=N1)
@@ -160,6 +160,8 @@ def simulate_isolated(params, sample_sizes, root_distribution, region_length, se
 #         msprime.PopulationParametersChange(time=T_split, initial_size=N_anc,
 #             population_id=0)
 # 	]
+
+#     demography = msprime.Demography.from_old_style(population_configurations=population_configurations, demographic_events=demographic_events)
 
 #     # simulate tree sequence
 #     ts = msprime.simulate(

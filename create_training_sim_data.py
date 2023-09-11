@@ -21,22 +21,23 @@ def main(args):
     params = param_set.ParamSet()
 
     parameters = ["mu", "rho", "N1", "growth"]#, "conversion", "conversion_length"]
-    parameter_values = [1e-8, 1e-8, 10_000, 0.01]#, 5e-8, 2]
+    parameter_values = [1.25e-8, 1.25e-8, 10_000, 1e-2]#, 5e-8, 2]
 
     params.update(parameters, parameter_values)
 
     CHROMS = list(map(str, range(1, 23)))
     CHROMS = [f"chr{c}" for c in CHROMS]
-    CHROMS = ["chr1"]
+    #CHROMS = ["chr1"]
     # simulate a bunch of chromosomes
     for chrom in tqdm.tqdm(CHROMS):
+        seed = np.random.randint(0, 2**32)
         # simulate the reference
         reference = create_reference(seq_length=args.length)
         # get the true root distribution on this chromosome
         root_dists = get_root_nucleotide_dist(reference)
         # generate the simulation using the true root dist on this chromosome
-        treeseq = simulate_isolated(params, [100], root_dists, args.length, 4242)
-
+        treeseq = simulate_isolated(params, [100], args.length, seed)
+        #print (f"{n_sites} variants on {chrom}")
         # first convert to VCF
         with open(f"data/simulated/vcf/{chrom}.simulated.vcf", "w") as outfh:
             treeseq.write_vcf(outfh, contig_id=chrom)

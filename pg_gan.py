@@ -23,7 +23,7 @@ import util
 from real_data_random import Region
 
 # globals for simulated annealing
-NUM_ITER = 300
+NUM_ITER = 150
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -83,13 +83,16 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
     # otherwise, if this is a "toy" example for testing, just run a single
     # round of discriminator pretraining
     else:
-        pg_gan.disc_pretraining(1) # for testing purposes
+        pg_gan.disc_pretraining(10) # for testing purposes
         param_current = [param.start() for param in pg_gan.parameters]
         pg_gan.generator.update_params(param_current)
         print ("COMPLETED DISCRIMINATOR PRETRAINING")
 
-    prev_region_lens = np.array([global_vars.L] * global_vars.BATCH_SIZE)
-    prev_root_dists = np.tile(iterator.base_root_dist, (global_vars.BATCH_SIZE, 1),)
+    
+    prev_region_lens = np.array([pg_gan.norm_len] * global_vars.BATCH_SIZE)
+
+
+    #prev_root_dists = np.tile(iterator.base_root_dist, (global_vars.BATCH_SIZE, 1),)
     # after discriminator pre-training, figure out our Generator loss.
     # specifically, generate a bunch of fake data using whatever the current
     # parameter values are, and figure out how good the Discriminator is at
@@ -140,7 +143,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
                 loss_proposal = pg_gan.generator_loss(
                     param_proposal,
                     prev_region_lens,
-                    prev_root_dists,
+                    #prev_root_dists,
                 )
 
                 # if our Generator's loss is better than the best so far *in this iteration*, keep track of
@@ -177,7 +180,7 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
             pg_gan.generator.update_params(param_current)
             # NOTE: should we be using the previous iteration's root distribution
             # as the root distribution for this iteration's generator loss?
-            real_acc, fake_acc, prev_region_lens, prev_root_dists = pg_gan.train_sa(NUM_BATCH, iteration=i)
+            real_acc, fake_acc, _ = pg_gan.train_sa(NUM_BATCH, iteration=i)
 
             # decide on the length of the region being used for measuring
             # Generator loss. this is very important, because we can measure
@@ -188,7 +191,6 @@ def simulated_annealing(generator, disc, iterator, parameters, seed,
             # so we just use L. but in every other iteration, we can use the distribution
             # of region lengths from the prior iteration to come up with a reasonable
             # length.
-            print (f"Using a region length of {np.median(prev_region_lens)} in the next Generator loss estimate.")
 
         # if we shouldn't accept the current set of parameters for the Generator, move on to the
         # next iteration.
@@ -242,6 +244,18 @@ class PG_GAN:
         self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
         self.disc_optimizer = tf.keras.optimizers.legacy.Adam()
 
+        # NOTE: we should get a sense of the dynamic lenghts of "real" regions
+        # that contain the specified number of SNPs we want. in other words,
+        # grab 10,000 random regions from the real data and record the 95th percentile
+        # of region lengths, so that we have a sense of how many base pairs we *should*
+        # need in order to reach NUM_SNPs. this way, we don't incentivize our
+        # generator to increase the mutation rate to get NUM_SNPs if the L variable is
+        # smaller than it should be
+        _, real_region_lens = iterator.real_batch(1, batch_size=10_000)
+        exp_region_length = int(np.max(real_region_lens))
+        print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
+        self.norm_len = exp_region_length
+
     def disc_pretraining(self, num_batches: int):
         """
         Pretrain the discriminator. We do this in order to give the discriminator
@@ -261,9 +275,10 @@ class PG_GAN:
         while max_acc < 0.9 and k < 10:
             # choose a completely random value for each of the tweakable parameters
             s_trial = [param.start() for param in self.parameters]
+            #s_trial = [10_000, 1.25e-8, 0.01]
             print("trial", k+1, s_trial)
             self.generator.update_params(s_trial)
-            real_acc, fake_acc, _, _ = self.train_sa(num_batches)
+            real_acc, fake_acc, _ = self.train_sa(num_batches)
             avg_acc = (real_acc + fake_acc)/2
             if avg_acc > max_acc:
                 max_acc = avg_acc
@@ -282,18 +297,20 @@ class PG_GAN:
 
         for epoch in tqdm.tqdm(range(num_batches)):
             # sample a batch of real regions
-            real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(neg1=True)
+            real_regions, real_region_lens = self.iterator.real_batch(self.norm_len)
             # perform a training step. in a single training step,
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
-
+            #region_lens_for_gen = np.array([np.max(real_region_lens)] * global_vars.BATCH_SIZE)
+            ### OR
+            region_lens_for_gen = np.array([self.norm_len] * global_vars.BATCH_SIZE)
             outname = f"imgs/{iteration}.png" if (epoch + 1) % 100 == 0 else None
 
             real_acc, fake_acc, disc_loss = self.train_step(
                 real_regions,
-                real_root_dists,
-                real_region_lens,
+                #real_root_dists,
+                region_lens_for_gen,
                 outname=outname,
             )
 
@@ -312,10 +329,10 @@ class PG_GAN:
             real_acc / global_vars.BATCH_SIZE,
             fake_acc / global_vars.BATCH_SIZE,
             real_region_lens,
-            real_root_dists,
+            #real_root_dists,
         )
 
-    def generator_loss(self, proposed_params, region_lens: np.ndarray, root_dists: np.ndarray,):
+    def generator_loss(self, proposed_params, region_lens: np.ndarray):
         """ Generator loss """
         # NOTE: how to parameterize the root distribution for the generator loss?
         # this is a tricky one, since a true test should use the root distribution of
@@ -325,22 +342,30 @@ class PG_GAN:
         # to fool the discriminator), we need to give it a root distribution to simualte from
         # that is close to a real region. to this end, we actually use the prevoius iteration's
         # distribution of root distributions gathered from the real data.
-        generated_regions = self.generator.simulate_batch(root_dists, region_lens, params=proposed_params)
+        generated_regions = self.generator.simulate_batch(
+            region_lens,
+            self.norm_len,
+            params=proposed_params,
+        )
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
 
-    def train_step(self, real_regions, real_root_dists, real_region_lens, outname = None):
+    def train_step(self, real_regions, real_region_lens, outname = None):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
-            generated_regions = self.generator.simulate_batch(real_root_dists, real_region_lens)
+            generated_regions = self.generator.simulate_batch(
+                real_region_lens,
+                self.norm_len,
+            )
+
             if outname is not None:
-                to_plot = np.random.randint(0, real_regions.shape[0], size=4)
+                to_plot = np.arange(4)
                 f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 8, figsize=(24, global_vars.NUM_CHANNELS * 4))
                 for channel_i in np.arange(global_vars.NUM_CHANNELS):
                     for idx, plot_i in enumerate(to_plot):
@@ -400,7 +425,7 @@ class PG_GAN:
             tf.math.add(real_entropy, fake_entropy),
         )
 
-        return total_loss - entropy, real_acc, fake_acc
+        return total_loss, real_acc, fake_acc
 
 
 ################################################################################
