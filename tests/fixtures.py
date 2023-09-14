@@ -51,4 +51,26 @@ def fake_image():
 # def unprocessed_image_and_dist():
 #     rng = np.random.default_rng(1833)
 #     # site x haps x channels
-#     return rng.poisson(lam = 0.01, size=(5, 10, 6)), 
+#     return rng.poisson(lam = 0.01, size=(5, 10, 6)),
+
+@pytest.fixture
+def unpolarized_image():
+    # haps x sites
+    return np.array([
+        [0, 0, 0, 1],
+        [1, 1, 1, 0],
+        [1, 1, 0, 1],
+        [1, 0, 0, 1],
+        [1, 1, 0, 0],
+    ])
+
+@pytest.fixture
+def polarized_image():
+    # haps x sites
+    return np.array([
+        [1, 1, 0, 0],
+        [0, 0, 1, 1],
+        [0, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 0, 1],
+    ])

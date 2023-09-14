@@ -1,5 +1,5 @@
 from real_data_random import prep_real_region
-from util import process_region, sum_across_channels, reorder
+from util import process_region, sum_across_channels, reorder, major_minor
 
 import pytest
 import numpy as np
@@ -66,3 +66,12 @@ def test_process_region(fake_image, distance_vec, neg1, n_snps, n_channels):
     
     
     assert processed.shape[0] == 5
+
+
+def test_major_minor(unpolarized_image, polarized_image):
+    n_haps, n_sites = unpolarized_image.shape
+
+    polarized = major_minor(unpolarized_image)
+    afs = np.sum(polarized, axis=0) / n_haps
+    #print (np.sum(polarized, axis=0))
+    #assert np.all(afs == 0.1)

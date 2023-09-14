@@ -6,4 +6,6 @@ from tests.fixtures import (
     ancestor,
     fake_image,
     distance_vec,
+    unpolarized_image,
+    polarized_image,
 )
