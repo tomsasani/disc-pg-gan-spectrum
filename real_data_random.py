@@ -72,10 +72,10 @@ def read_exclude(fh: str) -> IntervalTree:
 def prep_real_region(
     haplotypes: np.ndarray,
     positions: np.ndarray,
-    #reference_alleles: np.ndarray,
-    #alternate_alleles: np.ndarray,
-    #ancestor: mutyper.Ancestor,
-    #chrom: str,
+    reference_alleles: np.ndarray,
+    alternate_alleles: np.ndarray,
+    ancestor: mutyper.Ancestor,
+    chrom: str,
     n_haps: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -93,8 +93,7 @@ def prep_real_region(
     n_snps = positions.shape[0]
     assert n_snps == global_vars.NUM_SNPS
 
-    #out_arr = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
-    X = np.zeros((n_snps, n_haps), dtype=np.float32)
+    X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
 
     # loop over SNPs
     for vi in range(n_snps):
@@ -104,25 +103,23 @@ def prep_real_region(
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
         # NOTE: always assuming that we're only dealing with biallelics
-        # mutation = ancestor.mutation_type(
-        #     chrom,
-        #     int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
-        #     reference_alleles[vi].decode("utf-8"),
-        #     alternate_alleles[vi][0].decode("utf-8"),
-        # )
-        # #if None in mutation: continue
-        # mut_i = global_vars.MUT2IDX[">".join(mutation)]
-        X[vi, :] = haplotypes[vi]
+        mutation = ancestor.mutation_type(
+            chrom,
+            int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
+            reference_alleles[vi].decode("utf-8"),
+            alternate_alleles[vi][0].decode("utf-8"),
+        )
+        mut_i = global_vars.MUT2IDX[">".join(mutation)]
+        X[vi, :, mut_i] = haplotypes[vi]
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
-    #summed_across_channels = np.sum(out_arr, axis=2)
-    summed_across_haplotypes = np.sum(X, axis=1)
+    summed_across_channels = np.sum(X, axis=2)
+    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
     seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
-    if seg.shape[0] < n_snps:
-        print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the real data.")
-    X_filtered = X[seg, :]
+
+    X_filtered = X[seg, :, :]
     filtered_positions = positions[seg]
 
     return X_filtered, filtered_positions
@@ -174,14 +171,14 @@ class RealDataRandomIterator:
         print ("new", self.haplotypes.shape)
 
         self.positions = callset['variants/POS']
-        #self.reference_alleles = callset['variants/REF']
-        #self.alternate_alleles = callset['variants/ALT']
+        self.reference_alleles = callset['variants/REF']
+        self.alternate_alleles = callset['variants/ALT']
 
         self.num_haplotypes = self.haplotypes.shape[1]
 
         # read in ancestral sequence using mutyper
-        #ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
-        #self.ancestor = ancestor
+        ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
+        self.ancestor = ancestor
 
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
@@ -276,15 +273,15 @@ class RealDataRandomIterator:
             region, positions = prep_real_region(
                 haps,
                 sites,
-                #self.reference_alleles[start_idx:end_idx],
-                #self.alternate_alleles[start_idx:end_idx],
-                #self.ancestor,
-                #chromosome,
+                self.reference_alleles[start_idx:end_idx],
+                self.alternate_alleles[start_idx:end_idx],
+                self.ancestor,
+                chromosome,
                 self.num_haplotypes,
             )
-            #sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
-            #root_dists = get_root_nucleotide_dist(sequence)
-            return region, positions
+            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            root_dist = get_root_nucleotide_dist(sequence)
+            return region, root_dist, positions
 
         # try again recursively if not in accessible region
         else:
@@ -315,15 +312,14 @@ class RealDataRandomIterator:
         region_lens = np.zeros(batch_size)
 
         for i in range(batch_size):
-            region, positions = self.sample_real_region()
+            region, root_dist, positions = self.sample_real_region()
             region_lens[i] = np.max(positions) - np.min(positions)
-
             fixed_region = util.process_region(region, positions, norm_len)
 
             regions[i] = fixed_region
-            #root_dists[i] = region_nucs
+            root_dists[i] = root_dist
 
-        return regions, region_lens
+        return regions, root_dists, region_lens
 
 
 if __name__ == "__main__":

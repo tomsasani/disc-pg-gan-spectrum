@@ -33,6 +33,7 @@ class Generator:
         self.sample_sizes = sample_sizes
         self.num_haplotypes = sum(sample_sizes)
         self.rng = default_rng(seed)
+
         self.curr_params = None
 
         self.pretraining = False
@@ -40,6 +41,7 @@ class Generator:
 
     def simulate_batch(
         self,
+        root_dists: np.ndarray,
         region_lens: np.ndarray,
         norm_len: int,
         batch_size: int = global_vars.BATCH_SIZE,
@@ -59,6 +61,7 @@ class Generator:
         """
 
         # initialize matrix in which to store data
+        
         regions = np.zeros(
             (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
             dtype=np.float32)
@@ -78,11 +81,10 @@ class Generator:
             # NOTE: the simulator simulates numbers of *samples* rather
             # than haplotypes, so we need to divide the sample sizes by 2
             # to get the correct number of haplotypes.
-            #print (i, root_dists[i])
             ts = self.simulator(
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],
-                #root_dists[i],
+                root_dists[i],
                 region_lens[i],
                 seed,
             )
@@ -106,44 +108,35 @@ def prep_simulated_region(ts) -> np.ndarray:
     n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
     # create the initial multi-dimensional feature array
-    #X = np.zeros((n_sites, n_haps, 6))
-    X = np.zeros((n_snps, n_haps))
+    X = np.zeros((n_snps, n_haps, 6))
     for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]
         gts = var.genotypes
         # ignore multi-allelics
-        if len(alt_alleles) > 1: 
-            #print ("Found a multi-allelic!")
-            continue
+        if len(alt_alleles) > 1: continue
         alt = alt_alleles[0]
-        #for alt_idx, alt in enumerate(alts):
-            #haps_with_alt = np.where(gts == alt_idx + 1)[0]
         if ref in ("G", "T"):
             ref, alt = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
         # shouldn't be any silent mutations given transition matrix, but make sure
         # we don't include them
-        if ref == alt: 
-            #print ("Encountered a silent mutation!")
-            continue
-        # mutation = ">".join([ref, alt])
-        # mutation_idx = global_vars.MUT2IDX[mutation]
+        if ref == alt: continue
+        mutation = ">".join([ref, alt])
+        mutation_idx = global_vars.MUT2IDX[mutation]
         
-        #X[var_idx, haps_with_alt, mutation_idx] += 1
-        X[var_idx, :] = gts
+        X[var_idx, :, mutation_idx] = gts
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
-    #summed_across_channels = np.sum(X, axis=2)
-    summed_across_haplotypes = np.sum(X, axis=1)
+    summed_across_channels = np.sum(X, axis=2)
+    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
     assert summed_across_haplotypes.shape[0] == n_snps
     seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
     #if seg.shape[0] < n_snps:
     #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
-    
 
-    X_filtered = X[seg, :]
+    X_filtered = X[seg, :, :]
     
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)

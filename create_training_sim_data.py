@@ -7,7 +7,7 @@ import time
 import tskit
 import argparse
 from real_data_random import get_root_nucleotide_dist
-from simulation import simulate_isolated
+from simulation import simulate_exp
 
 
 def create_reference(seq_length: int = 1_000_000):
@@ -20,8 +20,11 @@ def create_reference(seq_length: int = 1_000_000):
 def main(args):
     params = param_set.ParamSet()
 
-    parameters = ["mu", "rho", "N1", "growth"]#, "conversion", "conversion_length"]
-    parameter_values = [1.25e-8, 1.25e-8, 10_000, 1e-2]#, 5e-8, 2]
+    parameters = ["mu", "rho", "N1", "N2", "T1", "T2", "growth"]#, "conversion", "conversion_length"]
+    parameter_values = [1.25e-8, 1.25e-8, 9_000, 5_000, 2_000, 350, 5e-3]#, 5e-8, 2]
+
+    #parameters = ["mu", "rho", "N1", "growth"]
+    #parameter_values = [1.25e-8, 1.25e-8, 10_000, 5e-3]
 
     params.update(parameters, parameter_values)
 
@@ -36,7 +39,7 @@ def main(args):
         # get the true root distribution on this chromosome
         root_dists = get_root_nucleotide_dist(reference)
         # generate the simulation using the true root dist on this chromosome
-        treeseq = simulate_isolated(params, [100], args.length, seed)
+        treeseq = simulate_exp(params, [100], root_dists, args.length, seed)
         #print (f"{n_sites} variants on {chrom}")
         # first convert to VCF
         with open(f"data/simulated/vcf/{chrom}.simulated.vcf", "w") as outfh:

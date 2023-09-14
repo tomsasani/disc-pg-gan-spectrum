@@ -10,6 +10,7 @@ import argparse
 import sys
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.neighbors import NearestNeighbors
 
 # our imports
 import generator
@@ -20,19 +21,27 @@ import simulation
 
 def inter_snp_distances(positions: np.ndarray, norm_len: int) -> np.ndarray:
     if positions.shape[0] > 0:
-        dist_vec = [0] 
+        dist_vec = [0]
         for i in range(positions.shape[0] - 1):
             # NOTE: inter-snp distances always normalized to simulated region size
             dist_vec.append((positions[i + 1] - positions[i]) / norm_len)
     else: dist_vec = []
     return np.array(dist_vec)
 
-def sort_by_genetic_similarity():
-    pass
+
+def sort_min_diff(X):
+    '''this function takes in a SNP matrix with indv on rows and returns the same matrix with indvs sorted by genetic similarity.
+    this problem is NP, so here we use a nearest neighbors approx.  it's not perfect, but it's fast and generally performs ok.
+    assumes your input matrix is a numpy array'''
+    mb = NearestNeighbors(n_neighbors=len(X), metric='manhattan').fit(X)
+    v = mb.kneighbors(X)
+    smallest = np.argmin(v[0].sum(axis=1))
+    return v[1][smallest]
+    #return X[v[1][smallest]]
 
 def sum_across_channels(X: np.ndarray) -> np.ndarray:
     summed = np.sum(X, axis=2)
-    #assert np.max(summed) == 1
+    assert np.max(summed) == 1
     return np.expand_dims(summed, axis=2)
 
 def sum_across_windows(X: np.ndarray) -> np.ndarray:
@@ -80,18 +89,14 @@ def process_region(
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps = X.shape
+    n_sites, n_haps, n_muts = X.shape
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
-    # get inter-SNP distances, relative to the simualted region size
-    distances = inter_snp_distances(positions, norm_len)
-
-    #print (f"Processing distances with region length of {norm_len}")
+    
 
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
     mid = n_sites // 2
-
     half_S = global_vars.NUM_SNPS // 2
 
     # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
@@ -103,24 +108,37 @@ def process_region(
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
         # add first channels of mutation spectra
-        middle_X = np.transpose(X[mid - half_S:mid + half_S, :], (1, 0))
-        region[:, :, :-1] = np.expand_dims(major_minor(middle_X), axis=2)
+        middle_X = np.transpose(X[mid - half_S:mid + half_S, :, :], (1, 0, 2))
+        # sort by genetic similarity
+        region[:, :, :-1] = major_minor(sum_across_channels(middle_X))
         # tile the inter-snp distances down the haplotypes
-        distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
+        # get inter-SNP distances, relative to the simualted region size
+        distances = inter_snp_distances(positions[mid - half_S: mid + half_S], norm_len)
+        distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, :, -1] = distances_tiled
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
+
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, half_S - mid:mid + other_half_S, :-1] = np.expand_dims(major_minor(np.transpose(X, (1, 0))), axis=2)
+        # sorted
+        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(X, (1, 0, 2))))
         # tile the inter-snp distances down the haplotypes
+        distances = inter_snp_distances(positions, norm_len)
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, half_S - mid:mid + other_half_S, -1] = distances_tiled
 
-    # convert anc/der alleles to -1, 1
+
+    # summed = sum_across_channels(region[:, :, :-1])
+    # assert np.max(summed) <= 1
+    # # sort haplotypes by genetic similarity (using all mutation types)
+    # sorted_hap_idx = sort_min_diff(summed)
+
+    # region_sorted = region[sorted_hap_idx, :, :]
+
     return region
 
 def parse_params(param_input):
@@ -142,13 +160,13 @@ def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites = matrix.shape
+    n_haps, n_sites, n_channels = matrix.shape
     for site_i in range(n_sites):
-        #for mut_i in range(n_channels):
+        for mut_i in range(n_channels):
             # if greater than 50% of haplotypes are ALT, reverse
             # the REF/ALT polarization
-        if np.count_nonzero(matrix[:, site_i] > 0) > (n_haps / 2):
-            matrix[:, site_i] = 1 - matrix[:, site_i]
+            if np.count_nonzero(matrix[:, site_i, mut_i] > 0) > (n_haps / 2):
+                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
     # option to convert from 0/1 to -1/+1
     matrix[matrix == 0] = -1
 
@@ -207,6 +225,17 @@ def parse_args():
         default=1833,
         help='seed for RNG',
     )
+    p.add_argument(
+        '-outpref',
+        type=str,
+        default="out",
+        help="prefix for output csv",
+    )
+    p.add_argument(
+        "-spectrum",
+        action="store_true",
+        help="whether to use a 7-channel mutation spectrum image instead of a 2-channel mutation image",
+    )
 
     args = p.parse_args()
 
@@ -234,7 +263,7 @@ def process_args(args):
 
     # always using the EXP model, with a single population
     num_pops = 1
-    simulator = simulation.simulate_isolated
+    simulator = simulation.simulate_exp
 
     if (global_vars.FILTER_SIMULATED or global_vars.FILTER_REAL_DATA):
         print("FILTERING SINGLETONS")

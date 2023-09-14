@@ -1,9 +1,6 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-#NUM_WINDOWS = 36
-#WINDOW_SIZE = 10
 NUM_SNPS = 36 * 1       # number of seg sites, should be divisible by 4
-L = 50_000           # heuristic to get enough SNPs for simulations (50,000 or fifty-thousand)
 BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
 
 DEFAULT_SEED = 1833
@@ -14,7 +11,6 @@ REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
 NUC_ORDER = ["A", "C", "G", "T"]
 
 NUM_CHANNELS = 2
-
 
 # section B: overwriting in-file data-------------------------------------------
 

@@ -76,8 +76,8 @@ class ParamSet:
     def __init__(self):
 
         # population sizes and bottleneck times
-        self.N1 = Parameter(9000, 1000, 20000, "N1")
-        self.N2 = Parameter(5000, 1000, 20000, "N2")
+        self.N1 = Parameter(9000, 1000, 30000, "N1")
+        self.N2 = Parameter(5000, 1000, 30000, "N2")
         self.T1 = Parameter(2000, 1500, 5000, "T1")
         self.T2 = Parameter(350, 100, 1500, "T2")
         # recombination rate
@@ -85,7 +85,7 @@ class ParamSet:
         # mutation rate
         self.mu = Parameter(1.25e-8, 1e-9, 1e-7, "mu")
         # population growth parameter
-        self.growth = Parameter(0.01, 0.0, 0.05, "growth")
+        self.growth = Parameter(0.005, 0.0, 0.05, "growth")
         # ratio of transitions to transversions (used to paramterize
         # the felsenstein 84 mutation model in msprime)
         self.kappa = Parameter(2.0, 0.1, 3.0, "kappa")
