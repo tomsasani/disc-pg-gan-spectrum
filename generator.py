@@ -27,6 +27,7 @@ class Generator:
         param_names,
         sample_sizes,
         seed,
+        reco_folder: str = None,
     ):
         self.simulator = simulator
         self.param_names = param_names
@@ -37,7 +38,12 @@ class Generator:
         self.curr_params = None
 
         self.pretraining = False
-        self.prior, self.weights = [], []
+        # for real data, use HapMap
+        if reco_folder is not None:
+            files = global_vars.get_reco_files(reco_folder)
+
+            self.prior, self.weights = util.parse_hapmap_empirical_prior(files)
+        else: self.prior, self.weights = [], []
 
     def simulate_batch(
         self,
@@ -131,11 +137,9 @@ def prep_simulated_region(ts) -> np.ndarray:
     # or because they were a silent mutation)
     summed_across_channels = np.sum(X, axis=2)
     summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
-    assert summed_across_haplotypes.shape[0] == n_snps
     seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
     #if seg.shape[0] < n_snps:
     #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
-
     X_filtered = X[seg, :, :]
     
     site_table = ts.tables.sites

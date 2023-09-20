@@ -36,7 +36,7 @@ NUM_CLASSES = 2     # "real" vs "simulated"
 print("NUM_SNPS", global_vars.NUM_SNPS)
 
 print("NUM_CLASSES", NUM_CLASSES)
-print("NUM_CHANNELS", global_vars.NUM_CHANNELS)
+# print("NUM_CHANNELS", global_vars.NUM_CHANNELS)
 
 def main():
     """Parse args and run simulated annealing"""
@@ -134,6 +134,7 @@ def simulated_annealing(
         # mentioned in the paper, this has the effect of only modifying a single parameter
         # in each iteration.
         for k in range(len(parameters)):
+            #print (f"Testing parameter {parameters[k].name}")
             # k = random.choice(range(len(parameters))) # random param
             # try 10 iterations of parameter value selection for each param
             for _ in range(10):
@@ -252,8 +253,8 @@ class PG_GAN:
         # need in order to reach NUM_SNPs. this way, we don't incentivize our
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
-        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=10_000)
-        exp_region_length = int(np.max(real_region_lens))
+        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=1_000)
+        exp_region_length = int(np.max(real_region_lens) * 2) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
         # figure out the median root distribution across these regions, use for
         # generator loss
@@ -313,16 +314,17 @@ class PG_GAN:
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
             region_lens_for_gen = np.array([self.norm_len] * global_vars.BATCH_SIZE)
-            outname = f"imgs/{iteration}.png" if (epoch + 1) % 100 == 0 else None
-
+            outname = f"imgs/{iteration}.png" if epoch == 1 else None
 
             # NOTE: should we simulate regions using the same distribution
             # of region lengths as in the real data? esp. if we're using the
-            # same root distributions?
+            # same root distributions? maybe not! need to ensure we have
+            # enough bp to count suff. number of mutations, so use max
+            # length but keep true root dists
             real_acc, fake_acc, disc_loss = self.train_step(
                 real_regions,
                 real_root_dists,
-                real_region_lens,
+                region_lens_for_gen,
                 outname=outname,
             )
 
@@ -445,7 +447,7 @@ class PG_GAN:
             tf.math.add(real_entropy, fake_entropy),
         )
 
-        return total_loss - entropy, real_acc, fake_acc
+        return total_loss, real_acc, fake_acc
 
 
 ################################################################################

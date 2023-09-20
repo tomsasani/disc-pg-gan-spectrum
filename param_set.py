@@ -81,9 +81,9 @@ class ParamSet:
         self.T1 = Parameter(2000, 1500, 5000, "T1")
         self.T2 = Parameter(350, 100, 1500, "T2")
         # recombination rate
-        self.rho = Parameter(1.25e-8, 1e-9, 1e-7, "rho")
+        self.rho = Parameter(1e-8, 1e-9, 1e-7, "rho")
         # mutation rate
-        self.mu = Parameter(1.25e-8, 1e-9, 1e-7, "mu")
+        self.mu = Parameter(1e-8, 1e-9, 1e-7, "mu")
         # population growth parameter
         self.growth = Parameter(0.005, 0.0, 0.05, "growth")
         # ratio of transitions to transversions (used to paramterize
