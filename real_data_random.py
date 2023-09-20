@@ -157,6 +157,8 @@ class RealDataRandomIterator:
         self.rng = np.random.default_rng(seed)
 
         callset = h5py.File(hdf_fh, mode='r')
+        # vcf_ = VCF(vcf_fh, gts012=True)
+        # self.vcf = vcf_
 
         # array of chromosomes
         self.chromosomes = callset['variants/CHROM']
@@ -183,6 +185,10 @@ class RealDataRandomIterator:
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
         self.autosomes = AUTOSOMES
+
+        # # map chromosome names to chromosome lengths
+        # seq2len = dict(zip(vcf_.seqnames, vcf_.seqlens))
+        # self.sequence_lengths = seq2len
 
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
@@ -287,6 +293,78 @@ class RealDataRandomIterator:
         else:
             return self.sample_real_region()
 
+    def sample_real_region_vcf(self) -> np.ndarray:
+        """Sample a random "real" region of the genome from the provided VCF file,
+        and use the variation data in that region to produce an ndarray of shape
+        (n_haps, n_sites, 6), where n_haps is the number of haplotypes in the VCF,
+        n_sites is the NUM_SNPs we want in both a simulated or real region (defined
+        in global_vars), and 6 is the number of 1-mer mutation types.
+
+        Args:
+            start_pos (int, optional): Starting position of the desired region. Defaults to None.
+
+        Returns:
+            np.ndarray: np.ndarray of shape (n_haps, n_sites, 6).
+            np.ndarray: np.ndarray of shape (4,).
+        """
+
+        # first, choose a random chromosome. we'll randomly sample the chromosome
+        # names, weighted by their overall lengths. 
+        chromosomes, lengths = [], []
+        for chrom, length in self.sequence_lengths.items():
+            if chrom not in self.autosomes: continue
+            chromosomes.append(chrom)
+            lengths.append(length)
+
+        lengths_arr = np.array(lengths)
+        lengths_probs = lengths_arr / np.sum(lengths_arr)
+
+        chromosome = self.rng.choice(chromosomes, size=1, p=lengths_probs)[0]
+        chromosome_len = self.sequence_lengths[chromosome]
+
+        
+        # grab a random position on this chromosome, such that the position
+        # plus the desired region length doesn't exceed the length of the chromosome.
+        start_pos = self.rng.integers(0, chromosome_len - global_vars.NUM_SNPS)
+
+        region = np.zeros((global_vars.NUM_SNPS, self.num_haplotypes, 6))
+        positions = np.zeros(global_vars.NUM_SNPS, dtype=np.int64)
+        # keep track of how many variants we've encountered while iterating
+        snp_count = 0
+        # initialize a region extending from this position to the end of the chromosome
+        # we probably won't need such a large region.
+        region_str = f"{chromosome}:{start_pos}-{chromosome_len}"
+        end_pos = start_pos + 1
+        for v in self.vcf(region_str):
+            if snp_count >= global_vars.NUM_SNPS: break
+            haplotypes = np.array(v.genotypes)[:, :-1].flatten()
+            ref, alt = v.REF.upper(), v.ALT[0].upper()
+            mutation = self.ancestor.mutation_type(v.CHROM, v.end, ref, alt)
+            mut_idx = global_vars.MUT2IDX[">".join(mutation)]
+            positions[snp_count] = v.POS
+            region[snp_count, :, mut_idx] = haplotypes
+            snp_count += 1
+
+        if snp_count < global_vars.NUM_SNPS:
+            return self.sample_real_region_vcf()
+
+        # make sure positions are sorted
+        assert np.all(np.diff(positions) >= 0)
+
+        # redefine start and end
+        start_pos, end_pos = np.min(positions), np.max(positions)
+        excessive_overlap = self.excess_overlap(chromosome, start_pos, end_pos)
+
+        # if we do have an accessible region
+        if not excessive_overlap:
+            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            root_dist = get_root_nucleotide_dist(sequence)
+            return region, root_dist, positions
+
+        # try again recursively if not in accessible region
+        else:
+            return self.sample_real_region_vcf()
+
 
 
     def real_batch(
@@ -315,7 +393,6 @@ class RealDataRandomIterator:
             region, root_dist, positions = self.sample_real_region()
             region_lens[i] = np.max(positions) - np.min(positions)
             fixed_region = util.process_region(region, positions, norm_len)
-
             regions[i] = fixed_region
             root_dists[i] = root_dist
 

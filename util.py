@@ -33,6 +33,8 @@ def sort_min_diff(X):
     '''this function takes in a SNP matrix with indv on rows and returns the same matrix with indvs sorted by genetic similarity.
     this problem is NP, so here we use a nearest neighbors approx.  it's not perfect, but it's fast and generally performs ok.
     assumes your input matrix is a numpy array'''
+    # reduce to 2 dims
+    X = X[:, :, 0]
     mb = NearestNeighbors(n_neighbors=len(X), metric='manhattan').fit(X)
     v = mb.kneighbors(X)
     smallest = np.argmin(v[0].sum(axis=1))
@@ -44,12 +46,14 @@ def sum_across_channels(X: np.ndarray) -> np.ndarray:
     assert np.max(summed) == 1
     return np.expand_dims(summed, axis=2)
 
-def sum_across_windows(X: np.ndarray) -> np.ndarray:
+def sum_across_windows(X: np.ndarray, window_size: int) -> np.ndarray:
 
     n_haps, n_sites, n_channels = X.shape
-    window_size = global_vars.WINDOW_SIZE
-    windows = np.arange(0, global_vars.NUM_SNPS, step=window_size)
+    windows = np.arange(0, n_sites, step=window_size)
     window_starts, window_ends = windows[:-1], windows[1:]
+
+    # NOTE: what about if a window doesn't contain a sufficient number of
+    # NUM_SNPS?
 
     rel_regions_sum = np.zeros((n_haps, window_starts.shape[0], n_channels))
     for i, (s, e) in enumerate(zip(window_starts, window_ends)):
@@ -59,11 +63,61 @@ def sum_across_windows(X: np.ndarray) -> np.ndarray:
         derived_sum_rescaled = derived_sum / channel_maxes.reshape(1, -1)
         derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
         rel_regions_sum[:, i, :] = derived_sum_rescaled
+
+    #rel_regions_rescaled = rel_regions_sum / np.max(rel_regions_sum)
     return rel_regions_sum
 
 
 def reorder(X: np.ndarray):
     return np.transpose(X, (1, 0, 2))
+
+def parse_hapmap_empirical_prior(files):
+    """
+    Parse recombination maps to create a distribution of recombintion rates to
+    use for real data simulations. Based on defiNETti software package.
+    """
+    print("Parsing HapMap recombination rates...")
+
+    # set up weights (probabilities) and reco rates
+    weights_all = []
+    prior_rates_all = []
+
+    for f in files:
+        mat = np.loadtxt(f, skiprows = 1, usecols=(1,2))
+        #print(mat.shape)
+        mat[:,1] = mat[:,1]*(1.e-8)
+        mat = mat[mat[:,1] != 0.0, :] # remove 0s
+        weights = mat[1:,0] - mat[:-1,0]
+        prior_rates = mat[:-1,1]
+
+        weights_all.extend(weights)
+        prior_rates_all.extend(prior_rates)
+
+    # normalize
+    prob = weights_all / np.sum(weights_all)
+
+    # make smaller by a factor of 50 (collapse)
+    indexes = list(range(len(prior_rates_all)))
+    indexes.sort(key=prior_rates_all.__getitem__)
+
+    prior_rates_all = [prior_rates_all[i] for i in indexes]
+    prob = [prob[i] for i in indexes]
+
+    new_rates = []
+    new_weights = []
+
+    collapse = 50
+    for i in range(0,len(prior_rates_all),collapse):
+        end = collapse
+        if len(prior_rates_all)-i < collapse:
+            end = len(prior_rates_all)-i
+        new_rates.append(sum(prior_rates_all[i:i+end])/end) # average
+        new_weights.append(sum(prob[i:i+end])) # sum
+
+    new_rates = np.array(new_rates)
+    new_weights = np.array(new_weights)
+
+    return new_rates, new_weights
 
 
 def process_region(
@@ -93,7 +147,6 @@ def process_region(
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
     
-
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
     mid = n_sites // 2
@@ -105,16 +158,18 @@ def process_region(
         dtype=np.float32,
     )
 
+    distances = inter_snp_distances(positions, norm_len)
+
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
         # add first channels of mutation spectra
         middle_X = np.transpose(X[mid - half_S:mid + half_S, :, :], (1, 0, 2))
+
         # sort by genetic similarity
-        region[:, :, :-1] = major_minor(sum_across_channels(middle_X))
+        region[:, :, :-1] = major_minor(middle_X)
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
-        distances = inter_snp_distances(positions[mid - half_S: mid + half_S], norm_len)
-        distances_tiled = np.tile(distances, (n_haps, 1))
+        distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, :, -1] = distances_tiled
 
@@ -124,9 +179,8 @@ def process_region(
         # use the complete genotype array
         # but just add it to the center of the main array
         # sorted
-        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(X, (1, 0, 2))))
+        region[half_S - mid:mid + other_half_S, :, :-1] = major_minor(np.transpose(X, (1, 0, 2)))
         # tile the inter-snp distances down the haplotypes
-        distances = inter_snp_distances(positions, norm_len)
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, half_S - mid:mid + other_half_S, -1] = distances_tiled
