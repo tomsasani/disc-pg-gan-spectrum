@@ -1,8 +1,14 @@
 import allel
+import pandas as pd
 
 CHROMS = list(map(str, range(1, 23)))
 CHROMS = [f"chr{c}" for c in CHROMS]
-#CHROMS = ["chr1"]
+
+df = pd.read_csv("hg38.genome", sep="\t")
+df = df[df["chrom"].isin(CHROMS)]
+
+CHROMOSOMES, LENGTHS = df["chrom"].to_list(), df["size"].to_list()
+chrom2length = dict(zip(CHROMOSOMES, LENGTHS))
 
 rule all:
     input:
@@ -12,16 +18,18 @@ rule all:
 rule make_training:
     input: "create_training_sim_data.py"
     output: 
-        temp(expand("data/simulated/vcf/{chrom}.simulated.vcf", chrom=CHROMS)),
-        temp(expand("data/simulated/ref/{chrom}.simulated.fa", chrom=CHROMS))
+        "data/simulated/vcf/{chrom}.simulated.vcf",
+        "data/simulated/ref/{chrom}.simulated.fa"
+    params:
+        length = lambda wcs: chrom2length[wcs.chrom]
     shell:
         """
-        python {input} -length 50000000
+        python {input} --chrom {wildcards.chrom} -length {params.length}
         """
 
 rule combine_vcf:
     input:
-        expand("data/simulated/vcf/{chrom}.simulated.vcf", chrom=CHROMS)
+        expand("data/simulated/vcf/{chrom}.simulated.vcf", chrom=CHROMOSOMES)
     output:
         "data/simulated/simulated.unfiltered.vcf.gz"
     shell:
@@ -34,12 +42,12 @@ rule filter_vcf:
     output: "data/simulated/simulated.vcf.gz"
     shell:
         """
-        bcftools view -m2 -M2 -Oz -o {output} {input}
+        bcftools view -m2 -M2 -Oz -c1 -C199 -o {output} {input}
         """
 
 rule combine_ref:
     input:
-        expand("data/simulated/ref/{chrom}.simulated.fa", chrom=CHROMS)
+        expand("data/simulated/ref/{chrom}.simulated.fa", chrom=CHROMOSOMES)
     output:
         "data/simulated/simulated.fa"
     shell:
