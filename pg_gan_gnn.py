@@ -329,15 +329,15 @@ class PG_GAN:
             self.disc_optimizer.zero_grad()
 
             # every 100th epoch, print the accuracy
-            #if (epoch+1) % 100 == 0:
-            template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
-            print(
-                template.format(
-                    epoch + 1,
-                    disc_loss,
-                    real_acc / global_vars.BATCH_SIZE * 100,
-                    fake_acc / global_vars.BATCH_SIZE * 100,
-                ))
+            if (epoch+1) % 100 == 0:
+                template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
+                print(
+                    template.format(
+                        epoch + 1,
+                        disc_loss,
+                        real_acc / global_vars.BATCH_SIZE * 100,
+                        fake_acc / global_vars.BATCH_SIZE * 100,
+                    ))
 
         return (
             real_acc / global_vars.BATCH_SIZE,
@@ -394,7 +394,6 @@ class PG_GAN:
             # measure the discriminator "loss," as well as separate measures of
             # accuracy predicting labels for the real and fake regions
             disc_loss, real_acc, fake_acc = self.discriminator_loss(real_output, fake_output)
-            print (disc_loss)
 
         return real_acc, fake_acc, disc_loss
 

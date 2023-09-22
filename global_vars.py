@@ -1,7 +1,12 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-NUM_SNPS = 36 * 1      # number of seg sites, should be divisible by 4
-BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
+#NUM_SNPS = 36 * 1      # number of seg sites, should be divisible by 4
+BATCH_SIZE = 20 # number of real/simulated regions to sample in a given batch
+
+WINDOW_SIZE = 4
+NUM_WINDOWS = 36
+NUM_SNPS = 36
+NUM_NODE_FEATURES = 1 # features stored in each node (currently, just one nucleotide per node)
 
 DEFAULT_SEED = 1833
 DEFAULT_SAMPLE_SIZE = 198
@@ -43,3 +48,16 @@ def get_reco_files(reco_folder):
     #          ".txt" for i in HUMAN_CHROM_RANGE]
 
     return files
+
+
+EDGE_IDXS = []
+# enumerate all possible edge connections
+for edge_idx in range(NUM_SNPS - 1):
+    # ref at idx 0 can connect to ref at idx 2 or alt at idx 3 (i.e., next site)
+    for base_idx in (edge_idx * 2, edge_idx * 2 + 1):
+        if base_idx % 2 == 0:
+            EDGE_IDXS.append([base_idx, base_idx + 2])
+            EDGE_IDXS.append([base_idx, base_idx + 3])
+        else:
+            EDGE_IDXS.append([base_idx, base_idx + 1])
+            EDGE_IDXS.append([base_idx, base_idx + 2])
