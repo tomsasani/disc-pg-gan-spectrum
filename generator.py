@@ -14,6 +14,8 @@ import global_vars
 import param_set
 import simulation
 import util
+import gnn_util
+from torch_geometric.loader import DataLoader
 
 ################################################################################
 # GENERATOR CLASS
@@ -68,13 +70,7 @@ class Generator:
 
         # initialize matrix in which to store data
 
-        regions = np.zeros((
-            batch_size,
-            self.num_haplotypes,
-            global_vars.NUM_SNPS,
-            4,
-        ),
-                           dtype=np.float32)
+        regions = []
 
         # set up parameters
         sim_params = param_set.ParamSet()
@@ -102,10 +98,12 @@ class Generator:
             region, positions = prep_simulated_region(ts)
             assert region.shape[0] == positions.shape[0]
             #print (f"Simulated region is {positions}bp")
-            region_formatted = util.process_region(region, positions, norm_len)
-            regions[i] = region_formatted
+            region_as_graph = gnn_util.create_graph(region)
+            regions.append(region_as_graph)
 
-        return regions
+        region_loader = DataLoader(regions, batch_size=global_vars.BATCH_SIZE)
+
+        return region_loader
 
     def update_params(self, new_params):
         self.curr_params = new_params
@@ -142,19 +140,21 @@ def prep_simulated_region(ts) -> np.ndarray:
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
-    # or because they were a silent mutation)
-    summed_across_channels = np.sum(X, axis=2)
-    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
-    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    # or because they were a silent mutation).
+    summed_across_haplotypes = np.sum(X, axis=1)
+    # make sure sites are biallelic
+    biallelic = np.sum(summed_across_haplotypes > 0, axis=1) == 2
+    seg = np.all(summed_across_haplotypes < n_haps, axis=1)
+    seg_idxs = np.where(biallelic & seg)[0]
     #if seg.shape[0] < n_snps:
     #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
-    X_filtered = X[seg, :, :]
+    X_filtered = X[seg_idxs, :, :]
 
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)
     assert positions.shape[0] == X.shape[0]
 
-    filtered_positions = positions[seg]
+    filtered_positions = positions[seg_idxs]
     return X_filtered, filtered_positions
 
 # testing
