@@ -393,6 +393,7 @@ class RealDataRandomIterator:
             region, root_dist, positions = self.sample_real_region()
             region_lens[i] = np.max(positions) - np.min(positions)
             fixed_region = util.process_region(region, positions, norm_len)
+            # testing for GNN
             regions[i] = fixed_region
             root_dists[i] = root_dist
 
