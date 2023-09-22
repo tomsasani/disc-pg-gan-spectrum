@@ -7,7 +7,7 @@ Date: 9/27/22
 # python imports
 import numpy as np
 from numpy.random import default_rng
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 import seaborn as sns
 # our imports
 import global_vars
@@ -67,10 +67,14 @@ class Generator:
         """
 
         # initialize matrix in which to store data
-        
-        regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
-            dtype=np.float32)
+
+        regions = np.zeros((
+            batch_size,
+            self.num_haplotypes,
+            global_vars.NUM_SNPS,
+            4,
+        ),
+                           dtype=np.float32)
 
         # set up parameters
         sim_params = param_set.ParamSet()
@@ -114,7 +118,7 @@ def prep_simulated_region(ts) -> np.ndarray:
     n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
     # create the initial multi-dimensional feature array
-    X = np.zeros((n_snps, n_haps, 6))
+    X = np.zeros((n_snps, n_haps, 4))
     for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]
@@ -127,10 +131,14 @@ def prep_simulated_region(ts) -> np.ndarray:
         # shouldn't be any silent mutations given transition matrix, but make sure
         # we don't include them
         if ref == alt: continue
-        mutation = ">".join([ref, alt])
-        mutation_idx = global_vars.MUT2IDX[mutation]
-        
-        X[var_idx, :, mutation_idx] = gts
+        ref_i, alt_i = global_vars.NUC2IDX[ref], global_vars.NUC2IDX[alt]
+        ref_haps = np.where(gts == 0)[0]
+        alt_haps = np.where(gts == 1)[0]
+        # mutation = ">".join([ref, alt])
+        # mutation_idx = global_vars.MUT2IDX[mutation]
+        X[var_idx, ref_haps, ref_i] = 1
+        X[var_idx, alt_haps, alt_i] = 1
+        #X[var_idx, :, mutation_idx] = gts
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
@@ -141,7 +149,7 @@ def prep_simulated_region(ts) -> np.ndarray:
     #if seg.shape[0] < n_snps:
     #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
     X_filtered = X[seg, :, :]
-    
+
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)
     assert positions.shape[0] == X.shape[0]

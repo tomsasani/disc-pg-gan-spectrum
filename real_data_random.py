@@ -26,6 +26,7 @@ from typing import Tuple
 # our imports
 import global_vars
 import util
+import gnn_util
 
 class Region:
 
@@ -93,7 +94,7 @@ def prep_real_region(
     n_snps = positions.shape[0]
     assert n_snps == global_vars.NUM_SNPS
 
-    X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
+    X = np.zeros((n_snps, n_haps, 4), dtype=np.float32)
 
     # loop over SNPs
     for vi in range(n_snps):
@@ -103,14 +104,18 @@ def prep_real_region(
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
         # NOTE: always assuming that we're only dealing with biallelics
-        mutation = ancestor.mutation_type(
+        ref, alt = ancestor.mutation_type(
             chrom,
             int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
             reference_alleles[vi].decode("utf-8"),
             alternate_alleles[vi][0].decode("utf-8"),
         )
-        mut_i = global_vars.MUT2IDX[">".join(mutation)]
-        X[vi, :, mut_i] = haplotypes[vi]
+        ref_i, alt_i = global_vars.NUC2IDX[ref], global_vars.NUC2IDX[alt] #= global_vars.MUT2IDX[">".join(mutation)]
+        ref_haps = np.where(haplotypes[vi] == 0)[0]
+        alt_haps = np.where(haplotypes[vi] == 1)[0]
+        X[vi, ref_haps, ref_i] = 1
+        X[vi, alt_haps, alt_i] = 1
+        #X[vi, :, mut_i] = haplotypes[vi]
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
@@ -379,7 +384,7 @@ class RealDataRandomIterator:
                 batch_size,
                 self.num_haplotypes,
                 global_vars.NUM_SNPS,
-                global_vars.NUM_CHANNELS,
+                4,
             ),
             dtype=np.float32,
         )
