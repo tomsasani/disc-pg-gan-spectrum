@@ -8,7 +8,6 @@ Date 9/27/22
 import datetime
 import numpy as np
 import sys
-import tensorflow as tf
 import scipy.stats
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -16,6 +15,8 @@ import seaborn as sns
 import tqdm
 from typing import List, Union
 import torch
+import networkx as nx
+from torch_geometric.utils.convert import to_networkx
 
 # our imports
 import gnn_discriminator
@@ -48,10 +49,10 @@ def main():
     if args.seed != None:
         #rng = np.random.default_rng(args.seed)
         np.random.seed(args.seed)
-        tf.random.set_seed(args.seed)
+        torch.manual_seed(args.seed)
 
     generator, iterator, parameters, sample_sizes = util.process_args(args)
-    disc = get_discriminator(sample_sizes)
+    disc = get_discriminator(64)
 
     posterior, loss_lst = simulated_annealing(
         generator,
@@ -62,9 +63,9 @@ def main():
         toy=args.toy,
     )
 
-    if args.disc is not None:
-        tf.saved_model.save(disc, "saved_model/" + args.disc)
-        print("discriminator saved")
+    # if args.disc is not None:
+    #     tf.saved_model.save(disc, "saved_model/" + args.disc)
+    #     print("discriminator saved")
 
     #print(posterior)
     #print(loss_lst)
@@ -236,19 +237,8 @@ class PG_GAN:
         self.iterator = iterator
         self.parameters = parameters
 
-        # this checks and prints the model (1 is for the batch size)
-        # self.discriminator.build_graph((
-        #     1,
-        #     iterator.num_haplotypes,
-        #     global_vars.NUM_SNPS,
-        #     global_vars.NUM_CHANNELS,
-        # ))
-        # self.discriminator.summary()
-
-        self.cross_entropy = torch.nn.BCELoss()
-        #self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        #self.disc_optimizer = tf.keras.optimizers.legacy.Adam()
-        self.disc_optimizer = torch.optim.Adam()
+        self.cross_entropy = torch.nn.BCEWithLogitsLoss()
+        self.disc_optimizer = torch.optim.Adam(disc.parameters())
 
         # NOTE: we should get a sense of the dynamic lenghts of "real" regions
         # that contain the specified number of SNPs we want. in other words,
@@ -257,7 +247,7 @@ class PG_GAN:
         # need in order to reach NUM_SNPs. this way, we don't incentivize our
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
-        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=1_000)
+        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=10)
         exp_region_length = int(np.max(real_region_lens) * 1.5) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
         # figure out the median root distribution across these regions, use for
@@ -309,8 +299,9 @@ class PG_GAN:
         Main training function. Comprises a single epoch with `num_batches`.
         """
 
-        disc_loss = -1
         for epoch in tqdm.tqdm(range(num_batches)):
+            # in each epoch, let's train the discriminator
+            self.discriminator.train()
             # sample a batch of real regions
             real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(self.norm_len)
             # perform a training step. in a single training step,
@@ -332,16 +323,21 @@ class PG_GAN:
                 outname=outname,
             )
 
+            # gradient descent
+            disc_loss.backward()
+            self.disc_optimizer.step()
+            self.disc_optimizer.zero_grad()
+
             # every 100th epoch, print the accuracy
-            if (epoch+1) % 100 == 0:
-                template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
-                print(
-                    template.format(
-                        epoch + 1,
-                        disc_loss,
-                        real_acc / global_vars.BATCH_SIZE * 100,
-                        fake_acc / global_vars.BATCH_SIZE * 100,
-                    ))
+            #if (epoch+1) % 100 == 0:
+            template = 'Epoch {}, Loss: {}, Real Acc: {}, Fake Acc: {}'
+            print(
+                template.format(
+                    epoch + 1,
+                    disc_loss,
+                    real_acc / global_vars.BATCH_SIZE * 100,
+                    fake_acc / global_vars.BATCH_SIZE * 100,
+                ))
 
         return (
             real_acc / global_vars.BATCH_SIZE,
@@ -374,9 +370,9 @@ class PG_GAN:
         #print (seeds)
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
-        loss = self.cross_entropy(torch.ones_like(fake_output), fake_output)
+        loss = self.cross_entropy(fake_output, torch.ones_like(fake_output))
 
-        return loss.numpy()
+        return loss.detach().numpy()
 
     def train_step(self, real_regions, real_root_dists, real_region_lens, outname = None):
         """One mini-batch for the discriminator"""
@@ -390,21 +386,15 @@ class PG_GAN:
             self.norm_len,
         )
 
-        # predict class labels (fake or real) for the real regions
-        real_output = self.discriminator(real_regions, training=True)
-        # do the same for the fake/generated regions
-        fake_output = self.discriminator(generated_regions, training=True)
-
-        self.disc_optimizer.zero_grad()
-
-        # measure the discriminator "loss," as well as separate measures of
-        # accuracy predicting labels for the real and fake regions
-        disc_loss, real_acc, fake_acc = self.discriminator_loss(
-            real_output, fake_output)
-
-        # gradient descent
-        disc_loss.backward()
-        self.disc_optimizer.step()
+        for real_data, gen_data in zip(real_regions, generated_regions):
+            # predict class labels (fake or real) for the real regions
+            real_output = self.discriminator(real_data.x, real_data.edge_index, real_data.batch, training=True)
+            # do the same for the fake/generated regions
+            fake_output = self.discriminator(gen_data.x, gen_data.edge_index, gen_data.batch, training=True)
+            # measure the discriminator "loss," as well as separate measures of
+            # accuracy predicting labels for the real and fake regions
+            disc_loss, real_acc, fake_acc = self.discriminator_loss(real_output, fake_output)
+            print (disc_loss)
 
         return real_acc, fake_acc, disc_loss
 
@@ -413,13 +403,14 @@ class PG_GAN:
         """ Discriminator loss """
         # measure accuracy of Discriminator's class label predictions
         # on both the real and fake data
-        real_acc = np.sum(real_output >= 0) # positive logit => pred 1
-        fake_acc = np.sum(fake_output <  0) # negative logit => pred 0
+        real_acc = torch.sum(real_output >= 0) # positive logit => pred 1
+        fake_acc = torch.sum(fake_output <  0) # negative logit => pred 0
 
         # use binary cross-entropy to measure Discriminator loss on both the
-        # real and fake data
-        real_loss = self.cross_entropy(torch.ones_like(real_output), real_output)
-        fake_loss = self.cross_entropy(torch.zeros_like(fake_output), fake_output)
+        # real and fake data. NOTE: with pytorch, expected values must come
+        # second and predictions must come first in the call to BCELoss.
+        real_loss = self.cross_entropy(real_output, torch.ones_like(real_output))
+        fake_loss = self.cross_entropy(fake_output, torch.zeros_like(fake_output))
         total_loss = real_loss + fake_loss
 
         # NOTE: we want to penalize our discriminator if it always
@@ -429,8 +420,8 @@ class PG_GAN:
         # on the real and fake datasets, and we subtract that from the Discriminator loss.
         # more variable predictions (i.e., not all 1s) should have higher entropy, so
         # they should "reward" the Discriminator by lowering its loss.
-        real_entropy = scipy.stats.entropy(torch.nn.sigmoid(real_output))
-        fake_entropy = scipy.stats.entropy(torch.nn.sigmoid(fake_output))
+        #real_entropy = scipy.stats.entropy(torch.sigmoid(real_output))
+        #fake_entropy = scipy.stats.entropy(torch.sigmoid(fake_output))
         # TODO: experiment with constant (scalar) by which we multiply
         # the total entropy. higher scalars will reward the Discriminator for
         # more variable guesses, but not sure how high we want to go.
@@ -446,10 +437,9 @@ class PG_GAN:
 # EXTRA UTILITIES
 ################################################################################
 
-def get_discriminator(sample_sizes):
+def get_discriminator(hidden_channels):
     # for now, only considering one-populatoin models
-    assert len(sample_sizes) == 1
-    return discriminator.OnePopModel(sample_sizes[0])
+    return gnn_discriminator.GCN(hidden_channels)
 
 if __name__ == "__main__":
     main()
