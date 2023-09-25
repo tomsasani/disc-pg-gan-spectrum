@@ -46,26 +46,66 @@ def sum_across_channels(X: np.ndarray) -> np.ndarray:
     assert np.max(summed) == 1
     return np.expand_dims(summed, axis=2)
 
-def sum_across_windows(X: np.ndarray, window_size: int) -> np.ndarray:
+def process_windows(X: np.ndarray, positions: np.ndarray, norm_len: int) -> np.ndarray:
 
-    n_haps, n_sites, n_channels = X.shape
-    windows = np.arange(0, n_sites, step=window_size)
+    n_sites, n_haps, n_channels = X.shape
+
+    # create NUM_WINDOWS windows
+    windows = np.arange(0, global_vars.NUM_SNPS + global_vars.WINDOW_SIZE, step=global_vars.WINDOW_SIZE)
     window_starts, window_ends = windows[:-1], windows[1:]
 
-    # NOTE: what about if a window doesn't contain a sufficient number of
-    # NUM_SNPS?
+    dists = inter_snp_distances(positions, norm_len)
 
-    rel_regions_sum = np.zeros((n_haps, window_starts.shape[0], n_channels))
+    # figure out the half-way point (measured in numbers of sites)
+    # in the input array
+    mid = n_sites // 2
+    half_S = global_vars.NUM_SNPS // 2
+
+    # define a new multi-dimensional array to store counts at every site
+    X_new = np.zeros((global_vars.NUM_SNPS, n_haps, n_channels), dtype=np.float32)
+    dist_new = np.zeros((global_vars.NUM_SNPS), dtype=np.float32)
+
+    # if we have more than enough segregating sites to fill the windows...
+    if mid >= half_S:
+        # subset the SNPs in the array to be NUM_WINDOW * WINDOW_SIZE and add to
+        # the updated array
+        X_new[:, :, :] = X[mid - half_S:mid + half_S, :, :]
+        dist_new[:] = dists[mid - half_S:mid + half_S]
+        
+    # if we don't have enough segregating sites to fill the windows...
+    else:
+        # don't subset the SNPs in the input array. use the complete genotype array
+        # but just add it to the center of the main array
+        other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
+        X_new[half_S - mid:mid + other_half_S, :, :] = X
+        dist_new[half_S - mid:mid + other_half_S] = dists
+
+    # define a new multi-dimensional array to store windowed sums across channels
+    windowed_sums = np.zeros((window_starts.shape[0], n_haps, n_channels))
+    # store median inter-SNP distance in each window
+    windowed_dists = np.zeros((window_starts.shape[0]))
+
+    # now, for every window, count the total number of derived alleles on haplotypes
     for i, (s, e) in enumerate(zip(window_starts, window_ends)):
         # get count of derived alleles in window
-        derived_sum = np.nansum(X[:, s:e, :], axis=1)
-        channel_maxes = np.max(derived_sum, axis=0)
-        derived_sum_rescaled = derived_sum / channel_maxes.reshape(1, -1)
+        derived_sum = np.nansum(X_new[s:e, :, :], axis=0)
+        # divide counts by the maximum possible value in a given channel (which
+        # is exactly equal to the window size)
+        derived_sum_rescaled = derived_sum / global_vars.WINDOW_SIZE
         derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
-        rel_regions_sum[:, i, :] = derived_sum_rescaled
+        windowed_sums[i, :, :] = derived_sum_rescaled
+        median_dist = np.median(dist_new[s:e])
+        windowed_dists[i] = median_dist
 
-    #rel_regions_rescaled = rel_regions_sum / np.max(rel_regions_sum)
-    return rel_regions_sum
+    windowed_sums_totals = np.sum(windowed_sums, axis=2)
+    max_val = np.max(windowed_sums_totals)
+    assert np.isclose(max_val, 1.) or max_val < 1
+
+    # convert distances to correct shape
+    windowed_dists = np.expand_dims(np.tile(windowed_dists, (n_haps, 1)).T, axis=2)
+    combined_channels = np.concatenate((windowed_sums, windowed_dists), axis=2)
+
+    return np.transpose(combined_channels, (1, 0, 2))
 
 
 def reorder(X: np.ndarray):
@@ -119,6 +159,18 @@ def parse_hapmap_empirical_prior(files):
 
     return new_rates, new_weights
 
+def find_segregating_idxs(X: np.ndarray):
+
+    n_snps, n_haps, n_muts = X.shape
+
+    # remove sites that are non-segregating (i.e., if we didn't
+    # add any information to them because they were multi-allelic
+    # or because they were a silent mutation)
+    summed_across_channels = np.sum(X, axis=2)
+    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
+    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    return seg
+
 
 def process_region(
     X: np.ndarray,
@@ -160,13 +212,15 @@ def process_region(
 
     distances = inter_snp_distances(positions, norm_len)
 
+    # summed = sum_across_channels(X)
+    # assert np.max(summed) == 1
+
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
         # add first channels of mutation spectra
         middle_X = np.transpose(X[mid - half_S:mid + half_S, :, :], (1, 0, 2))
-
         # sort by genetic similarity
-        region[:, :, :-1] = major_minor(middle_X)
+        region[:, :, :-1] = major_minor(sum_across_channels(middle_X))
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
         distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
@@ -175,23 +229,13 @@ def process_region(
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
-
         # use the complete genotype array
         # but just add it to the center of the main array
-        # sorted
-        region[half_S - mid:mid + other_half_S, :, :-1] = major_minor(np.transpose(X, (1, 0, 2)))
+        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(X, (1, 0, 2))))
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, half_S - mid:mid + other_half_S, -1] = distances_tiled
-
-
-    # summed = sum_across_channels(region[:, :, :-1])
-    # assert np.max(summed) <= 1
-    # # sort haplotypes by genetic similarity (using all mutation types)
-    # sorted_hap_idx = sort_min_diff(summed)
-
-    # region_sorted = region[sorted_hap_idx, :, :]
 
     return region
 
@@ -215,16 +259,22 @@ def major_minor(matrix):
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
     n_haps, n_sites, n_channels = matrix.shape
-    for site_i in range(n_sites):
+    
+    # figure out the channel in which each mutation occurred
+    for site_i in range(n_sites):        
         for mut_i in range(n_channels):
-            # if greater than 50% of haplotypes are ALT, reverse
-            # the REF/ALT polarization
-            if np.count_nonzero(matrix[:, site_i, mut_i] > 0) > (n_haps / 2):
+            # in this channel, figure out whether this site has any 
+            # derived alleles
+            haplotype_sum = np.sum(matrix[:, site_i, mut_i])
+            # if not, we'll mask all haplotypes at this site on this channel,
+            # leaving the channel with the actual mutation unmasked
+            if haplotype_sum > (n_haps / 2):
+                # if greater than 50% of haplotypes are ALT, reverse
+                # the REF/ALT polarization
                 matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
-    # option to convert from 0/1 to -1/+1
-    matrix[matrix == 0] = -1
 
-    # matrix[matrix > 1] = 1
+    matrix[matrix == 0] = -1
+    
     return matrix
 
 
