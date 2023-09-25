@@ -15,6 +15,7 @@ import pandas as pd
 import seaborn as sns
 import tqdm
 from typing import List, Union
+import wandb
 
 # our imports
 import discriminator
@@ -45,7 +46,8 @@ def main():
 
     # set up seeds
     if args.seed != None:
-        rng = np.random.default_rng(args.seed)
+        #rng = np.random.default_rng(args.seed)
+        np.random.seed(args.seed)
         tf.random.set_seed(args.seed)
 
     generator, iterator, parameters, sample_sizes = util.process_args(args)
@@ -56,7 +58,7 @@ def main():
         disc,
         iterator,
         parameters,
-        rng,
+        args.seed,
         toy=args.toy,
     )
 
@@ -77,13 +79,28 @@ def simulated_annealing(
     disc: discriminator.OnePopModel,
     iterator: real_data_random.RealDataRandomIterator,
     parameters: List[param_set.Parameter],
-    rng: np.random.default_rng,
+    seed: int,
     toy: bool = False,
 ):
     """Main function that drives GAN updates"""
 
     # main object for pg-gan
-    pg_gan = PG_GAN(generator, disc, iterator, parameters)
+    pg_gan = PG_GAN(generator, disc, iterator, parameters, seed)
+
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="mutator-ml",
+
+        # track hyperparameters and run metadata
+        config={
+            "epochs": NUM_ITER,
+            "architecture": "CNN",
+            "dataset": "simulated",
+            "num_snps": global_vars.NUM_SNPS,
+            "num_channels": global_vars.NUM_CHANNELS,
+            "batch_size": global_vars.BATCH_SIZE,
+            "random_seed": seed,
+        })
 
     # find starting point through pre-training (update generator in method)
     if not toy:
@@ -172,7 +189,7 @@ def simulated_annealing(
             p_accept = (loss_current / best_iteration_loss) * T
         # draw a random float from a uniform dist [0, 1). if the float is less than the "probability" defined
         # above, we'll accept the current set of parameters.
-        rand = rng.random()
+        rand = np.random.uniform()
         accept = rand < p_accept
 
         disc_loss = -1
@@ -194,16 +211,15 @@ def simulated_annealing(
         else:
             print("NOT ACCEPTED")
 
+        log_dict = {"Generator loss": best_iteration_loss,
+                "Discriminator loss": disc_loss,
+                "Accuracy on real data": real_acc,
+                "Accuracy on fake data": fake_acc,}
+
         for pi, p in enumerate(parameters):
-            out_df.append({
-                "epoch": i,
-                "param": p.name,
-                "generator_loss": best_iteration_loss,
-                "discriminator_loss": disc_loss,
-                "param_value": best_iteration_params[pi],
-                "Real acc": real_acc,
-                "Fake acc": fake_acc,
-            })
+            log_dict.update({p.name: best_iteration_params[pi]})
+            log_dict.update({f"{p.name} (expected)": p.value})
+        wandb.log(log_dict)
 
         #print("T, p_accept, rand, s_current, loss_curr", end=" ")
         print (f"Temperature: {T}, Current params: {param_current}, Generator loss: {loss_current}, Real acc: {real_acc}, Fake acc: {fake_acc}")
@@ -225,7 +241,7 @@ def temperature(i, num_iter):
 
 class PG_GAN:
 
-    def __init__(self, generator, disc, iterator, parameters):
+    def __init__(self, generator, disc, iterator, parameters, seed):
         """Setup the model and training framework"""
 
         # set up generator and discriminator
@@ -254,7 +270,7 @@ class PG_GAN:
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
         _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=1_000)
-        exp_region_length = int(np.max(real_region_lens) * 2) # heuristic to ensure right size
+        exp_region_length = int(np.max(real_region_lens) * 1.5) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
         # figure out the median root distribution across these regions, use for
         # generator loss
@@ -387,13 +403,14 @@ class PG_GAN:
             )
 
             # if outname is not None:
-            #     to_plot = np.arange(4)
-            #     f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 8, figsize=(24, global_vars.NUM_CHANNELS * 4))
+            #     n_to_plot = 1
+            #     to_plot = np.arange(n_to_plot)
+            #     f, axarr = plt.subplots(global_vars.NUM_CHANNELS, (n_to_plot * 2), figsize=(12, global_vars.NUM_CHANNELS * n_to_plot * 4))
             #     for channel_i in np.arange(global_vars.NUM_CHANNELS):
             #         for idx, plot_i in enumerate(to_plot):
-            #             sns.heatmap(real_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=False)
-            #             sns.heatmap(generated_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=False)
-            #     for idx in range(4):
+            #             sns.heatmap(real_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=True)
+            #             sns.heatmap(generated_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=True)
+            #     for idx in range(n_to_plot):
             #         axarr[0, idx * 2].set_title("R")
             #         axarr[0, (idx * 2) + 1].set_title("G")
             #     f.tight_layout()
