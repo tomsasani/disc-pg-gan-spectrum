@@ -13,11 +13,16 @@ from tensorflow.keras.layers import (
     Dense,
     Flatten,
     Conv2D,
+    DepthwiseConv2D,
     MaxPooling2D,
     Dropout,
     Concatenate,
 )
 from tensorflow.keras import Model
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 class OnePopModel(Model):
     """Single population model - based on defiNETti software.
@@ -27,31 +32,22 @@ class OnePopModel(Model):
     def __init__(self, pop, saved_model=None): # (self, n_haps: int, n_snps: int, n_channels: int, saved_model = None)
         super(OnePopModel, self).__init__()
 
-        print (f"DISCRIMINATOR should be expecting {pop} haplotypes")
+        #print (f"DISCRIMINATOR should be expecting {pop} haplotypes")
 
         input_shape = (pop, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS)
 
         if saved_model is None:
-            # it is (1,5) for permutation invariance (shape is n X SNPs)
-            # create 32 convolutional feature maps (i.e., using 32 convolutional
-            # filters).
-            self.conv1 = Conv2D(32, (1, 5), activation='relu', input_shape = input_shape, data_format="channels_last")
+            self.conv1 = Conv2D(32, (1, 5), activation="relu", data_format="channels_last", input_shape=input_shape)
             self.conv2 = Conv2D(64, (1, 5), activation='relu')
-            #self.conv3 = Conv2D(64, (1, 7), activation='relu')
-            # create 64 more convolutional feature maps 
-            #self.conv2 = Conv2D(32, (1, 5), activation='relu')
-            # try out a 1x1 convolution instead of permutation-invariant max
-            #self.conv3 = Conv2D(64, (1, 5), activation='relu')
-            # pooling applied after each convolution. 
+            # pooling applied after each convolution.
             self.pool = MaxPooling2D(pool_size = (1,2), strides = (1,2))
 
             self.flatten = Flatten()
             self.dropout = Dropout(rate=0.5)
 
             # change from 128,128 to 32,32,16 (same # params)
-            self.fc1 = Dense(32, activation='relu')
-            self.fc2 = Dense(32, activation='relu')
-            self.fc3 = Dense(16, activation='relu')
+            self.fc1 = Dense(128, activation='relu')
+            self.fc2 = Dense(128, activation='relu')
             self.dense3 = Dense(1)#2, activation='softmax') # two classes
 
         else:
@@ -65,65 +61,56 @@ class OnePopModel(Model):
 
             self.fc1 = saved_model.fc1
             self.fc2 = saved_model.fc2
-            self.fc3 = saved_model.fc3
             self.dense3 = saved_model.dense3
 
         self.pop = pop
 
     def last_hidden_layer(self, x):
         """ Note this should mirror call """
-        assert x.shape[1] == self.pop
-
+        assert x.shape[2] == global_vars.NUM_SNPS
         x = self.conv1(x)
         x = self.pool(x)
         x = self.conv2(x)
-        x = self.pool(x) # pool
+        x = self.pool(x)
+       
 
         # note axis is 1 b/c first axis is batch
         # can try max or sum as the permutation-invariant function
-        x = tf.math.reduce_max(x, axis=1)
+        # x = tf.math.reduce_max(x, axis=1)
 
         # reduce sum will take an array of (50, 200, 36, 6)
         # and sum across haplotypes to produce a tensor of
         # (50, 36, 6).
-        #x = tf.math.reduce_sum(x, axis=1)
+        x = tf.math.reduce_sum(x, axis=1)
 
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.dropout(x, training=False)
 
         x = self.fc2(x)
-        x = self.dropout(x, training=False)
-
-        x = self.fc3(x)
         x = self.dropout(x, training=False)
 
         return x
 
     def call(self, x, training=None):
         """x is the genotype matrix + distances"""
-        assert x.shape[1] == self.pop
+        assert x.shape[2] == global_vars.NUM_SNPS
 
-        
         x = self.conv1(x)
-        x = self.pool(x) # pool
+        x = self.pool(x)
         x = self.conv2(x)
-        x = self.pool(x) # pool
-        
+        x = self.pool(x)
 
         # note axis is 1 b/c first axis is batch
         # can try max or sum as the permutation-invariant function
-        x = tf.math.reduce_max(x, axis=1)
-        #x = tf.math.reduce_sum(x, axis=1)
+        #x = tf.math.reduce_max(x, axis=1)
+        x = tf.math.reduce_sum(x, axis=1)
 
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.dropout(x, training=training)
 
         x = self.fc2(x)
-        x = self.dropout(x, training=training)
-
-        x = self.fc3(x)
         x = self.dropout(x, training=training)
 
         return self.dense3(x)

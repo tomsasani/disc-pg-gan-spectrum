@@ -11,7 +11,7 @@ REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
 NUC_ORDER = ["A", "C", "G", "T"]
 NUC2IDX = dict(zip(NUC_ORDER, range(4)))
 
-NUM_CHANNELS = 7
+NUM_CHANNELS = 2
 
 # section B: overwriting in-file data-------------------------------------------
 
