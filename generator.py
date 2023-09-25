@@ -135,9 +135,7 @@ def prep_simulated_region(ts) -> np.ndarray:
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
-    summed_across_channels = np.sum(X, axis=2)
-    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
-    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    seg = util.find_segregating_idxs(X)
     #if seg.shape[0] < n_snps:
     #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
     X_filtered = X[seg, :, :]

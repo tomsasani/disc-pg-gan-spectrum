@@ -115,9 +115,7 @@ def prep_real_region(
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
-    summed_across_channels = np.sum(X, axis=2)
-    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
-    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
+    seg = util.find_segregating_idxs(X)
 
     X_filtered = X[seg, :, :]
     filtered_positions = positions[seg]
