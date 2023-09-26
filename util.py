@@ -195,7 +195,7 @@ def process_region(
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps, n_muts = X.shape
+    n_sites, n_haps, _ = X.shape
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
     
@@ -210,6 +210,8 @@ def process_region(
         dtype=np.float32,
     )
 
+    #if norm_len != 1:
+    #    print (np.diff(positions), norm_len)
     distances = inter_snp_distances(positions, norm_len)
 
     # summed = sum_across_channels(X)

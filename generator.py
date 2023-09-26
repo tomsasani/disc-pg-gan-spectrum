@@ -79,6 +79,8 @@ class Generator:
         else:
             sim_params.update(self.param_names, params)
 
+        #print (sim_params.N1.value, sim_params.N2.value, sim_params.T1.value, sim_params.T2.value, sim_params.rho.value, norm_len)
+
         # simulate each region
         for i in range(batch_size):
             # set random seed
@@ -114,7 +116,7 @@ def prep_simulated_region(ts) -> np.ndarray:
     n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
     # create the initial multi-dimensional feature array
-    X = np.zeros((n_snps, n_haps, 6))
+    X = np.zeros((n_snps, n_haps))
     for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]
@@ -130,14 +132,14 @@ def prep_simulated_region(ts) -> np.ndarray:
         mutation = ">".join([ref, alt])
         mutation_idx = global_vars.MUT2IDX[mutation]
         
-        X[var_idx, :, mutation_idx] = gts
+        X[var_idx, :] = gts
 
+    X = np.expand_dims(X, axis=2)
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
     seg = util.find_segregating_idxs(X)
-    #if seg.shape[0] < n_snps:
-    #    print (f"Found {n_snps - seg.shape[0]} non-segregating sites in the simulated data.")
+    
     X_filtered = X[seg, :, :]
     
     site_table = ts.tables.sites

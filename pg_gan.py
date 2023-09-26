@@ -37,7 +37,7 @@ NUM_CLASSES = 2     # "real" vs "simulated"
 print("NUM_SNPS", global_vars.NUM_SNPS)
 
 print("NUM_CLASSES", NUM_CLASSES)
-# print("NUM_CHANNELS", global_vars.NUM_CHANNELS)
+print("NUM_CHANNELS", global_vars.NUM_CHANNELS)
 
 def main():
     """Parse args and run simulated annealing"""
@@ -66,8 +66,6 @@ def main():
         tf.saved_model.save(disc, "saved_model/" + args.disc)
         print("discriminator saved")
 
-    #print(posterior)
-    #print(loss_lst)
 
 ################################################################################
 # SIMULATED ANNEALING
@@ -192,8 +190,6 @@ def simulated_annealing(
         rand = np.random.uniform()
         accept = rand < p_accept
 
-        disc_loss = -1
-
         # if we accept the current set of parameters, let's retrain our model!
         if accept:
             print("ACCEPTED")
@@ -201,10 +197,10 @@ def simulated_annealing(
             loss_current = best_iteration_loss
             # NOTE: should this be pg_gan.generator.update_params() ?
             # update the parameters of the Generator to reflect the best set of parameters in the iteration.
-            pg_gan.generator.update_params(param_current)
+            generator.update_params(param_current)
             # NOTE: should we be using the previous iteration's root distribution
             # as the root distribution for this iteration's generator loss?
-            real_acc, fake_acc, _, disc_loss = pg_gan.train_sa(NUM_BATCH, iteration=i)
+            real_acc, fake_acc, _ = pg_gan.train_sa(NUM_BATCH, iteration=i)
 
         # if we shouldn't accept the current set of parameters for the Generator, move on to the
         # next iteration.
@@ -212,14 +208,15 @@ def simulated_annealing(
             print("NOT ACCEPTED")
 
         log_dict = {"Generator loss": best_iteration_loss,
-                "Discriminator loss": disc_loss,
                 "Accuracy on real data": real_acc,
-                "Accuracy on fake data": fake_acc,}
+                "Accuracy on fake data": fake_acc,
+                "Epoch": i}
 
         for pi, p in enumerate(parameters):
             log_dict.update({p.name: best_iteration_params[pi]})
             log_dict.update({f"{p.name} (expected)": p.value})
         wandb.log(log_dict)
+        out_df.append(log_dict)
 
         #print("T, p_accept, rand, s_current, loss_curr", end=" ")
         print (f"Temperature: {T}, Current params: {param_current}, Generator loss: {loss_current}, Real acc: {real_acc}, Fake acc: {fake_acc}")
@@ -269,7 +266,7 @@ class PG_GAN:
         # need in order to reach NUM_SNPs. this way, we don't incentivize our
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
-        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=1_000)
+        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=5_000)
         exp_region_length = int(np.max(real_region_lens) * 1.5) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
         # figure out the median root distribution across these regions, use for
@@ -300,11 +297,10 @@ class PG_GAN:
         while max_acc < 0.9 and k < 10:
             # choose a completely random value for each of the tweakable parameters
             s_trial = [param.start() for param in self.parameters]
-            #s_trial = [10_000, 1.25e-8, 1.25e-8, 5e-3]
             print("trial", k+1, s_trial)
             print (dict(zip([param.name for param in self.parameters], s_trial)))
             self.generator.update_params(s_trial)
-            real_acc, fake_acc, _, disc_loss = self.train_sa(num_batches)
+            real_acc, fake_acc, _ = self.train_sa(num_batches)
             avg_acc = (real_acc + fake_acc) / 2
             if avg_acc > max_acc:
                 max_acc = avg_acc
@@ -321,7 +317,6 @@ class PG_GAN:
         Main training function. Comprises a single epoch with `num_batches`.
         """
 
-        disc_loss = -1
         for epoch in tqdm.tqdm(range(num_batches)):
             # sample a batch of real regions
             real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(self.norm_len)
@@ -359,7 +354,6 @@ class PG_GAN:
             real_acc / global_vars.BATCH_SIZE,
             fake_acc / global_vars.BATCH_SIZE,
             real_region_lens,
-            disc_loss,
         )
 
     def generator_loss(
@@ -383,9 +377,9 @@ class PG_GAN:
             self.norm_len,
             params=proposed_params,
         )
-        #print (seeds)
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
+        #print ("measuring generator loss, output is", fake_output)
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
@@ -419,7 +413,6 @@ class PG_GAN:
             real_output = self.discriminator(real_regions, training=True)
             # do the same for the fake/generated regions
             fake_output = self.discriminator(generated_regions, training=True)
-            #print (f"Predicted classes on real regions: {np.sum(real_output >= 0)}\nPredicted classes on generated regions: {np.sum(fake_output > 0)}")
             # measure the discriminator "loss," as well as separate measures of
             # accuracy predicting labels for the real and fake regions
             disc_loss, real_acc, fake_acc = self.discriminator_loss(
@@ -464,7 +457,7 @@ class PG_GAN:
             tf.math.add(real_entropy, fake_entropy),
         )
 
-        return total_loss, real_acc, fake_acc
+        return total_loss - entropy, real_acc, fake_acc
 
 
 ################################################################################

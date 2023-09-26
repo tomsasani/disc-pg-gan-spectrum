@@ -76,7 +76,6 @@ def prep_real_region(
     alternate_alleles: np.ndarray,
     ancestor: mutyper.Ancestor,
     chrom: str,
-    n_haps: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     prepare the feature array for a real region.
@@ -90,10 +89,10 @@ def prep_real_region(
         Tuple[np.ndarray, np.ndarray]: _description_
     """
 
-    n_snps = positions.shape[0]
+    n_snps, n_haps = haplotypes.shape
     assert n_snps == global_vars.NUM_SNPS
 
-    X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
+    X = np.zeros((n_snps, n_haps), dtype=np.float32)
 
     # loop over SNPs
     for vi in range(n_snps):
@@ -103,14 +102,16 @@ def prep_real_region(
         # in the space of nucleotides described by the root distribution in
         # the ancestral reference genome sequence.
         # NOTE: always assuming that we're only dealing with biallelics
-        mutation = ancestor.mutation_type(
-            chrom,
-            int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
-            reference_alleles[vi].decode("utf-8"),
-            alternate_alleles[vi][0].decode("utf-8"),
-        )
-        mut_i = global_vars.MUT2IDX[">".join(mutation)]
-        X[vi, :, mut_i] = haplotypes[vi]
+        # mutation = ancestor.mutation_type(
+        #     chrom,
+        #     int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
+        #     reference_alleles[vi].decode("utf-8"),
+        #     alternate_alleles[vi][0].decode("utf-8"),
+        # )
+        # mut_i = global_vars.MUT2IDX[">".join(mutation)]
+        X[vi, :] = haplotypes[vi]
+
+    X = np.expand_dims(X, axis=2)
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
@@ -281,7 +282,6 @@ class RealDataRandomIterator:
                 self.alternate_alleles[start_idx:end_idx],
                 self.ancestor,
                 chromosome,
-                self.num_haplotypes,
             )
             sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
             root_dist = get_root_nucleotide_dist(sequence)
@@ -320,7 +320,6 @@ class RealDataRandomIterator:
         chromosome = self.rng.choice(chromosomes, size=1, p=lengths_probs)[0]
         chromosome_len = self.sequence_lengths[chromosome]
 
-        
         # grab a random position on this chromosome, such that the position
         # plus the desired region length doesn't exceed the length of the chromosome.
         start_pos = self.rng.integers(0, chromosome_len - global_vars.NUM_SNPS)

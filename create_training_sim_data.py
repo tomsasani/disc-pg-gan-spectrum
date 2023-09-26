@@ -23,9 +23,6 @@ def main(args):
     parameters = ["mu", "rho", "N1", "N2", "T1", "T2", "growth"]#, "conversion", "conversion_length"]
     parameter_values = [1e-8, 1e-8, 9_000, 5_000, 2_000, 350, 5e-3]#, 5e-8, 2]
 
-    #parameters = ["mu", "rho", "N1", "growth"]
-    #parameter_values = [1.25e-8, 1.25e-8, 10_000, 5e-3]
-
     params.update(parameters, parameter_values)
 
     print (f"Creating VCF and FA for {args.chrom} with length {args.length}")

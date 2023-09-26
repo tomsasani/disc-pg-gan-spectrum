@@ -10,6 +10,8 @@ df = df[df["chrom"].isin(CHROMS)]
 CHROMOSOMES, LENGTHS = df["chrom"].to_list(), df["size"].to_list()
 chrom2length = dict(zip(CHROMOSOMES, LENGTHS))
 
+CHROMOSOMES = ["chr1"]
+
 rule all:
     input:
         "data/simulated/simulated.h5",
@@ -37,12 +39,29 @@ rule combine_vcf:
         bcftools concat -Oz -o {output} {input}
         """
 
-rule filter_vcf:
-    input: "data/simulated/simulated.unfiltered.vcf.gz"
-    output: "data/simulated/simulated.vcf.gz"
+rule index_vcf:
+    input:
+        "data/simulated/simulated.unfiltered.vcf.gz"
+    output:
+        "data/simulated/simulated.unfiltered.vcf.gz.tbi"
+    threads: 4
     shell:
         """
-        bcftools view -m2 -M2 -Oz -c1 -C199 -o {output} {input}
+        bcftools index --tbi --threads 4 {input}
+        """
+
+rule filter_vcf:
+    input: 
+        vcf = "data/simulated/simulated.unfiltered.vcf.gz",
+        vcf_idx = "data/simulated/simulated.unfiltered.vcf.gz.tbi"
+    output: 
+        vcf = "data/simulated/simulated.vcf.gz",
+        vcf_idx = "data/simulated/simulated.vcf.gz.tbi"
+    shell:
+        """
+        bcftools view -m2 -M2 -Oz -c1 -C199 -o {output.vcf} {input.vcf}
+
+        bcftools index --tbi {output.vcf}
         """
 
 rule combine_ref:
@@ -56,7 +75,9 @@ rule combine_ref:
         """
 
 rule convert_to_h5:
-    input: vcf = "data/simulated/simulated.vcf.gz"
+    input: 
+        vcf = "data/simulated/simulated.vcf.gz",
+        vcf_idx = "data/simulated/simulated.vcf.gz.tbi"
     output: hdf = "data/simulated/simulated.h5"
     run:
         allel.vcf_to_hdf5(
