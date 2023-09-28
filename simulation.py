@@ -16,11 +16,17 @@ import util
 
 ALLELE2IDX = dict(zip(global_vars.NUC_ORDER, range(len(global_vars.NUC_ORDER))))
 
-def parameterize_mutation_model(root_dist: np.ndarray):
+def parameterize_mutation_model(root_dist: np.ndarray, adj_mut: float = 1.):
 
     # define expected mutation probabilities
-    mutations = ["C>T", "C>A", "C>G", "A>T", "A>C", "A>G"]
+    mutations = ["C>T", "C>G", "C>A", "A>T", "A>C", "A>G"]
     lambdas = np.array([0.25, 0.1, 0.1, 0.1, 0.1, 0.35])
+
+    new_lambda = lambdas[0] * adj_mut
+    to_subtract = (new_lambda - lambdas[0]) / 5
+    # divvy up the increase across other muts
+    lambdas[1:] -= to_subtract
+    lambdas[0] = new_lambda
 
     transition_matrix = np.zeros((4, 4))
 
@@ -56,7 +62,17 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
+
+def simulate_exp(
+    params,
+    sample_sizes,
+    root_dist,
+    region_len,
+    seed,
+    adj_mut: float = 1.,
+    adj_rate: float = 1.,
+    restrict_time: bool = False,
+):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -88,14 +104,34 @@ def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
     )
 
     # define mutation model
-    mutation_model = parameterize_mutation_model(root_dist)
+    mutation_model = parameterize_mutation_model(root_dist, adj_mut=adj_mut)
 
-    mts = msprime.sim_mutations(
-        ts,
-        rate=params.mu.value,
-        model=mutation_model,
-        random_seed=seed,
-        discrete_genome=True,
-    )
+    if not restrict_time:
+        mts = msprime.sim_mutations(
+            ts,
+            rate=params.mu.value * adj_rate,
+            model=mutation_model,
+            random_seed=seed,
+            discrete_genome=True,
+        )
+    else:
+        # only increase the mutation rate in the last few generations
+        # lower rate up to T2
+        mts = msprime.sim_mutations(
+            ts,
+            rate=params.mu.value,
+            model=mutation_model,
+            random_seed=seed,
+            discrete_genome=True,
+            start_time = T2,
+        )
+        mts = msprime.sim_mutations(
+            mts,
+            rate=params.mu.value * adj_rate,
+            model=mutation_model,
+            random_seed=seed,
+            discrete_genome=True,
+            end_time = T2,
+        )
 
     return mts

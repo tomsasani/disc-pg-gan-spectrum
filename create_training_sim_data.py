@@ -34,10 +34,19 @@ def main(args):
     # get the true root distribution on this chromosome
     root_dists = get_root_nucleotide_dist(reference)
     # generate the simulation using the true root dist on this chromosome
-    treeseq = simulate_exp(params, [100], root_dists, args.length, seed)
+    treeseq = simulate_exp(
+        params,
+        [100],
+        root_dists,
+        args.length,
+        seed,
+        adj_mut=args.adj_mut,
+        adj_rate=args.adj_rate,
+        restrict_time=args.restrict_time,
+    )
     #print (f"{n_sites} variants on {chrom}")
     # first convert to VCF
-    with open(f"data/simulated/vcf/{args.chrom}.simulated.vcf", "w") as outfh:
+    with open(f"data/simulated/vcf/{args.outpref}.vcf", "w") as outfh:
         treeseq.write_vcf(outfh, contig_id=args.chrom)
     # update reference sequence
 
@@ -47,7 +56,7 @@ def main(args):
 
     # refactor reference using true ancestral alleles and create hdf5
     reference[positions] = reference_alleles
-    with open(f"data/simulated/ref/{args.chrom}.simulated.fa", "w") as outfh:
+    with open(f"data/simulated/ref/{args.outpref}.fa", "w") as outfh:
         reference_seq = "".join(reference)
         outfh.write(f">{args.chrom}\n{reference_seq}\n")
 
@@ -55,5 +64,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--chrom")
     p.add_argument("-length", default=1_000_000, type=int)
+    p.add_argument("-adj_mut", type=float, default=1.)
+    p.add_argument("-adj_rate", type=float, default=1.)
+    p.add_argument("-restrict_time", type=bool, default=False)
+    p.add_argument("-outpref", type=str)
+
     args = p.parse_args()
     main(args)

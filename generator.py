@@ -116,7 +116,8 @@ def prep_simulated_region(ts) -> np.ndarray:
     n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
 
     # create the initial multi-dimensional feature array
-    X = np.zeros((n_snps, n_haps))
+    X = np.zeros((n_snps, n_haps, 6))
+
     for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]
@@ -132,9 +133,9 @@ def prep_simulated_region(ts) -> np.ndarray:
         mutation = ">".join([ref, alt])
         mutation_idx = global_vars.MUT2IDX[mutation]
         
-        X[var_idx, :] = gts
+        X[var_idx, :, mutation_idx] = gts
 
-    X = np.expand_dims(X, axis=2)
+    # X = np.expand_dims(X, axis=2)
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
