@@ -210,34 +210,40 @@ def process_region(
         dtype=np.float32,
     )
 
-    #if norm_len != 1:
-    #    print (np.diff(positions), norm_len)
     distances = inter_snp_distances(positions, norm_len)
 
-    # summed = sum_across_channels(X)
-    # assert np.max(summed) == 1
+    # first, transpose the full input matrix to be n_haps x n_snps
+    X = np.transpose(X, (1, 0, 2))
+    # first, separate out the actual sites matrix from the one-hot nucs
+    sites, nucs = X[:, :, 0], X[:, :, 1:]
+
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
-        # add first channels of mutation spectra
-        middle_X = np.transpose(X[mid - half_S:mid + half_S, :, :], (1, 0, 2))
-        # sort by genetic similarity
-        region[:, :, :-1] = major_minor(middle_X)
+        # define indices to use for slicing
+        i, j = mid - half_S, mid + half_S
+        # add sites to output
+        region[:, :, 0] = major_minor(sites[:, i:j])
+        # add one-hot to output
+        region[:, :, 1:-1] = nucs[:, i:j, :]
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
-        distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
+        distances_tiled = np.tile(distances[i:j], (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, :, -1] = distances_tiled
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
+        i, j = half_S - mid, mid + other_half_S
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(np.transpose(X, (1, 0, 2)))
+        region[:, i:j, 0] = major_minor(sites)
+        # add one-hot to output
+        region[:, i:j, 1:-1] = nucs
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
-        region[:, half_S - mid:mid + other_half_S, -1] = distances_tiled
+        region[:, i:j, -1] = distances_tiled
 
     return region
 
@@ -260,24 +266,23 @@ def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites, n_channels = matrix.shape
+    n_haps, n_sites = matrix.shape
     
     # figure out the channel in which each mutation occurred
-    for site_i in range(n_sites):        
-        for mut_i in range(n_channels):
-            # in this channel, figure out whether this site has any 
-            # derived alleles
-            haplotypes = matrix[:, site_i, mut_i]
-            # if not, we'll mask all haplotypes at this site on this channel,
-            # leaving the channel with the actual mutation unmasked
-            if np.sum(haplotypes) > (n_haps / 2):
-                # if greater than 50% of haplotypes are ALT, reverse
-                # the REF/ALT polarization
-                haplotypes = 1 - haplotypes
-            # if np.sum(haplotypes) > 0:
-            #     haplotypes[haplotypes == 0] = -1
+    # for site_i in range(n_sites):        
+    #     # in this channel, figure out whether this site has any 
+    #     # derived alleles
+    #     haplotypes = matrix[:, site_i]
+    #     # if not, we'll mask all haplotypes at this site on this channel,
+    #     # leaving the channel with the actual mutation unmasked
+    #     if np.sum(haplotypes) > (n_haps / 2):
+    #         # if greater than 50% of haplotypes are ALT, reverse
+    #         # the REF/ALT polarization
+    #         haplotypes = 1 - haplotypes
+    #     # if np.sum(haplotypes) > 0:
+    #     #     haplotypes[haplotypes == 0] = -1
 
-            matrix[:, site_i, mut_i] = haplotypes
+    #     matrix[:, site_i] = haplotypes
             
             
     matrix[matrix == 0] = -1

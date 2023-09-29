@@ -15,9 +15,7 @@ import global_vars
 import util
 import param_set
 
-ALLELE2IDX = dict(zip(global_vars.NUC_ORDER, range(len(global_vars.NUC_ORDER))))
-
-def parameterize_mutation_model(root_dist: np.ndarray):
+def get_transition_matrix():
 
     # define expected mutation probabilities
     mutations = ["C>T", "C>A", "C>G", "A>T", "A>C", "A>G"]
@@ -33,13 +31,19 @@ def parameterize_mutation_model(root_dist: np.ndarray):
         ref_rc, alt_rc = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
         # add its mutation probability to the transition matrix
         for r, a in ((ref, alt), (ref_rc, alt_rc)):
-            ri, ai = ALLELE2IDX[r], ALLELE2IDX[a]
+            ri, ai = global_vars.NUC2IDX[r], global_vars.NUC2IDX[a]
             transition_matrix[ri, ai] = prob
 
     # normalize transition matrix so that rows sum to 1
     rowsums = np.sum(transition_matrix, axis=1)
     norm_transition_matrix = transition_matrix / rowsums[:, np.newaxis]
     np.fill_diagonal(norm_transition_matrix, val=0)
+
+    return norm_transition_matrix
+
+def parameterize_mutation_model(root_dist: np.ndarray):
+
+    norm_transition_matrix = get_transition_matrix()
 
     if np.sum(root_dist) != 1:
         #print ("Root distribution doesn't sum to 1!", root_dist)
@@ -57,7 +61,7 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, region_len, seed):
+def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -93,12 +97,12 @@ def simulate_exp(params, sample_sizes, region_len, seed):
     )
 
     # define mutation model
-    # mutation_model = parameterize_mutation_model(root_dist)
+    mutation_model = parameterize_mutation_model(root_dist)
 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        # model=mutation_model,
+        model=mutation_model,
         random_seed=seed,
         discrete_genome=True,
     )

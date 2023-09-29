@@ -47,7 +47,7 @@ class Generator:
 
     def simulate_batch(
         self,
-        # root_dists: np.ndarray,
+        root_dists: np.ndarray,
         region_lens: np.ndarray,
         norm_len: int,
         batch_size: int = global_vars.BATCH_SIZE,
@@ -90,14 +90,13 @@ class Generator:
             ts = self.simulator(
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],
-                # root_dists[i],
+                root_dists[i],
                 region_lens[i],
                 seed,
             )
             # return 3D array
             region, positions = prep_simulated_region(ts)
             assert region.shape[0] == positions.shape[0]
-            #print (f"Simulated region is {positions}bp")
             region_formatted = util.process_region(region, positions, norm_len)
             regions[i] = region_formatted
 
@@ -111,28 +110,39 @@ def prep_simulated_region(ts) -> np.ndarray:
     """Gets simulated data ready. Returns a matrix of size
     (n_haps, n_sites, 6)"""
 
+    # get the expected transition matrix
+    tm = simulation.get_transition_matrix()
+
+    # the genotype matrix returned by tskit is our expected output
+    # n_snps x n_haps matrix
     n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
+    X = np.zeros((n_snps, n_haps), dtype=np.float32)
+    X_one_hot = np.zeros((n_snps, n_haps, 4))
 
-    # create the initial multi-dimensional feature array
-    X = np.zeros((n_snps, n_haps))
-
-    for var_idx, var in enumerate(ts.variants()):
+    for vi, var in enumerate(ts.variants()):
+        gts = var.genotypes
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]
         gts = var.genotypes
         # ignore multi-allelics
         if len(alt_alleles) > 1: continue
         alt = alt_alleles[0]
-        if ref in ("G", "T"):
-            ref, alt = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
         # shouldn't be any silent mutations given transition matrix, but make sure
         # we don't include them
-        if ref == alt: continue
-        mutation = ">".join([ref, alt])
-        mutation_idx = global_vars.MUT2IDX[mutation]
-        
-        X[var_idx, :] = gts
+        if ref == alt: 
+            continue
+        # get indices of reference and alternate alleles
+        ref_i, alt_i = global_vars.NUC2IDX[ref], global_vars.NUC2IDX[alt]
 
+        ref_haps = np.where(gts == 0)[0]
+        alt_haps = np.where(gts == 1)[0]
+
+        X[vi] = gts
+
+        # increment the ref and alt nucleotides 
+        X_one_hot[vi, ref_haps, ref_i] = 1
+        X_one_hot[vi, alt_haps, alt_i] = 1
+        
     X = np.expand_dims(X, axis=2)
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
@@ -140,13 +150,18 @@ def prep_simulated_region(ts) -> np.ndarray:
     seg = util.find_segregating_idxs(X)
     
     X_filtered = X[seg, :, :]
+    X_one_hot_filtered = X_one_hot[seg, :, :]
+
+    nuc_sum = np.sum(X_one_hot_filtered, axis=2)
+    try: assert np.all(nuc_sum == 1)
+    except: print ("Generated fails", np.min(nuc_sum), np.max(nuc_sum))
     
     site_table = ts.tables.sites
     positions = site_table.position.astype(np.int64)
     assert positions.shape[0] == X.shape[0]
 
     filtered_positions = positions[seg]
-    return X_filtered, filtered_positions
+    return np.concatenate((X_filtered, X_one_hot_filtered), axis=2), filtered_positions
 
 # testing
 if __name__ == "__main__":
