@@ -13,6 +13,7 @@ from typing import List
 # our imports
 import global_vars
 import util
+import param_set
 
 ALLELE2IDX = dict(zip(global_vars.NUC_ORDER, range(len(global_vars.NUC_ORDER))))
 
@@ -56,27 +57,31 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
+def simulate_exp(params, sample_sizes, region_len, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
-    T2 = params.T2.value
-    N2 = params.N2.value
+    N0 = params.N2.value / math.exp(-params.growth.value * params.T2.value)
 
-    N0 = N2 / math.exp(-params.growth.value * T2)
+    demography = msprime.Demography()
+    # at present moment, create population A with the size it should be
+    # following its period of exponential growth
+    demography.add_population(name="A", initial_size=N0, growth_rate=params.growth.value)
+    # T2 generations in the past, change the population size to be N2
+    demography.add_population_parameters_change(
+        population="A",
+        time=params.T2.value,
+        initial_size=params.N2.value,
+        growth_rate=0,
+    )
 
-    demographic_events = [
-        msprime.PopulationParametersChange(time=0,
-                                           initial_size=N0,
-                                           growth_rate=params.growth.value),
-        msprime.PopulationParametersChange(time=T2,
-                                           initial_size=N2,
-                                           growth_rate=0),
-        msprime.PopulationParametersChange(time=params.T1.value,
-                                           initial_size=params.N1.value),
-    ]
-
-    demography = msprime.Demography.from_old_style(demographic_events=demographic_events)
+    # T1 generations in the past, change the population size to be N1
+    demography.add_population_parameters_change(
+        population="A",
+        time=params.T1.value,
+        initial_size=params.N1.value,
+        growth_rate=0,
+    )
 
     ts = msprime.sim_ancestry(
         samples=sum(sample_sizes),
@@ -88,14 +93,19 @@ def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
     )
 
     # define mutation model
-    mutation_model = parameterize_mutation_model(root_dist)
+    # mutation_model = parameterize_mutation_model(root_dist)
 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        model=mutation_model,
+        # model=mutation_model,
         random_seed=seed,
         discrete_genome=True,
     )
 
     return mts
+
+if __name__ == "__main__":
+    params = param_set.ParamSet()
+
+    simulate_exp(params, [100], 50_000, 3232)
