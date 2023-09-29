@@ -47,7 +47,7 @@ class Generator:
 
     def simulate_batch(
         self,
-        root_dists: np.ndarray,
+        # root_dists: np.ndarray,
         region_lens: np.ndarray,
         norm_len: int,
         batch_size: int = global_vars.BATCH_SIZE,
@@ -79,8 +79,6 @@ class Generator:
         else:
             sim_params.update(self.param_names, params)
 
-        #print (sim_params.N1.value, sim_params.N2.value, sim_params.T1.value, sim_params.T2.value, sim_params.rho.value, norm_len)
-
         # simulate each region
         for i in range(batch_size):
             # set random seed
@@ -92,7 +90,7 @@ class Generator:
             ts = self.simulator(
                 sim_params,
                 [ss // 2 for ss in self.sample_sizes],
-                root_dists[i],
+                # root_dists[i],
                 region_lens[i],
                 seed,
             )
@@ -117,6 +115,7 @@ def prep_simulated_region(ts) -> np.ndarray:
 
     # create the initial multi-dimensional feature array
     X = np.zeros((n_snps, n_haps))
+
     for var_idx, var in enumerate(ts.variants()):
         ref = var.alleles[0]
         alt_alleles = var.alleles[1:]

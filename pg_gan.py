@@ -17,6 +17,7 @@ import tqdm
 from typing import List, Union
 import wandb
 
+
 # our imports
 import discriminator
 import global_vars
@@ -25,8 +26,12 @@ import real_data_random
 import param_set
 import generator
 
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+
 # globals for simulated annealing
-NUM_ITER = 300
+NUM_ITER = 100
 NUM_BATCH = 100
 print("NUM_ITER", NUM_ITER)
 print("BATCH_SIZE", global_vars.BATCH_SIZE)
@@ -85,9 +90,11 @@ def simulated_annealing(
     # main object for pg-gan
     pg_gan = PG_GAN(generator, disc, iterator, parameters, seed)
 
+    current_date = datetime.datetime.now().isoformat().split("T")[0]
+
     wandb.init(
         # set the wandb project where this run will be logged
-        project="mutator-ml",
+        project=f"mutator-ml-spectra-{current_date}",
 
         # track hyperparameters and run metadata
         config={
@@ -112,15 +119,17 @@ def simulated_annealing(
         print ("COMPLETED DISCRIMINATOR PRETRAINING")
 
     prev_region_lens = np.array([pg_gan.norm_len] * global_vars.BATCH_SIZE)
-    prev_root_dists = np.tile(
-        pg_gan.exp_root_dist,
-        (global_vars.BATCH_SIZE, 1),
-    )
+    # prev_root_dists = np.tile(
+    #     pg_gan.exp_root_dist,
+    #     (global_vars.BATCH_SIZE, 1),
+    # )
     # after discriminator pre-training, figure out our Generator loss.
     # specifically, generate a bunch of fake data using whatever the current
     # parameter values are, and figure out how good the Discriminator is at
     # figuring out that it's all fake.
-    loss_current = pg_gan.generator_loss(param_current, prev_root_dists, prev_region_lens)
+    #loss_current = pg_gan.generator_loss(param_current, prev_root_dists, prev_region_lens)
+    loss_current = pg_gan.generator_loss(param_current, prev_region_lens)
+
     print("Current params, Current generator loss", param_current, loss_current)
 
     posterior = [param_current]
@@ -165,7 +174,7 @@ def simulated_annealing(
                 # good our discriminator is at telling that it's fake.
                 loss_proposal = pg_gan.generator_loss(
                     param_proposal,
-                    prev_root_dists,
+                    # prev_root_dists,
                     prev_region_lens,
                 )
                 # if our Generator's loss is better than the best so far *in this iteration*, keep track of
@@ -207,13 +216,13 @@ def simulated_annealing(
         else:
             print("NOT ACCEPTED")
 
-        log_dict = {"Generator loss": best_iteration_loss,
+        log_dict = {"Generator loss": loss_current,
                 "Accuracy on real data": real_acc,
                 "Accuracy on fake data": fake_acc,
                 "Epoch": i}
 
         for pi, p in enumerate(parameters):
-            log_dict.update({p.name: best_iteration_params[pi]})
+            log_dict.update({p.name: param_current[pi]})
             log_dict.update({f"{p.name} (expected)": p.value})
         wandb.log(log_dict)
         out_df.append(log_dict)
@@ -266,16 +275,18 @@ class PG_GAN:
         # need in order to reach NUM_SNPs. this way, we don't incentivize our
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
-        _, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=5_000)
+        #_, real_root_dists, real_region_lens = iterator.real_batch(1, batch_size=5_000)
+        _, real_region_lens = iterator.real_batch(1, batch_size=5_000)
+
         exp_region_length = int(np.max(real_region_lens) * 1.5) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
         # figure out the median root distribution across these regions, use for
         # generator loss
-        exp_root_dist = np.median(real_root_dists, axis=0)
-        print (f"Root distribution that should be average is {exp_root_dist}")
+        # exp_root_dist = np.median(real_root_dists, axis=0)
+        # print (f"Root distribution that should be average is {exp_root_dist}")
 
         self.norm_len = exp_region_length
-        self.exp_root_dist = exp_root_dist
+        #self.exp_root_dist = exp_root_dist
 
     def disc_pretraining(self, num_batches: int):
         """
@@ -319,7 +330,9 @@ class PG_GAN:
 
         for epoch in tqdm.tqdm(range(num_batches)):
             # sample a batch of real regions
-            real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(self.norm_len)
+            #real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(self.norm_len)
+            real_regions, real_region_lens = self.iterator.real_batch(self.norm_len)
+
             # perform a training step. in a single training step,
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
@@ -334,7 +347,7 @@ class PG_GAN:
             # length but keep true root dists
             real_acc, fake_acc, disc_loss = self.train_step(
                 real_regions,
-                real_root_dists,
+                # real_root_dists,
                 region_lens_for_gen,
                 outname=outname,
             )
@@ -359,7 +372,7 @@ class PG_GAN:
     def generator_loss(
         self,
         proposed_params: List[Union[int, float]],
-        root_dists: np.ndarray,
+        # root_dists: np.ndarray,
         region_lens: np.ndarray,
     ):
         """ Generator loss """
@@ -372,26 +385,25 @@ class PG_GAN:
         # that is close to a real region. to this end, we actually use the prevoius iteration's
         # distribution of root distributions gathered from the real data.
         generated_regions = self.generator.simulate_batch(
-            root_dists,
+            # root_dists,
             region_lens,
             self.norm_len,
             params=proposed_params,
         )
         # not training when we use the discriminator here
         fake_output = self.discriminator(generated_regions, training=False)
-        #print ("measuring generator loss, output is", fake_output)
         loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
 
         return loss.numpy()
 
-    def train_step(self, real_regions, real_root_dists, real_region_lens, outname = None):
+    def train_step(self, real_regions, real_region_lens, outname = None):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
             generated_regions = self.generator.simulate_batch(
-                real_root_dists,
+                # real_root_dists,
                 real_region_lens,
                 self.norm_len,
             )

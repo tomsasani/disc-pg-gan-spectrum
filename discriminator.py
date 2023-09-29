@@ -38,7 +38,10 @@ class OnePopModel(Model):
 
         if saved_model is None:
             self.conv1 = Conv2D(32, (1, 5), activation="relu", data_format="channels_last", input_shape=input_shape)
-            self.conv2 = Conv2D(64, (1, 5), activation='relu')
+            self.conv2 = Conv2D(64, (1, 5), activation="relu")
+            self.conv1x1_32 = Conv2D(32, (1, 1), activation="relu")
+            self.conv1x1_64 = Conv2D(64, (1, 1), activation="relu")
+            # self.conv3 = Conv2D(64, (1, 5), activation="relu")
             # pooling applied after each convolution.
             self.pool = MaxPooling2D(pool_size = (1,2), strides = (1,2))
 
@@ -68,10 +71,17 @@ class OnePopModel(Model):
     def last_hidden_layer(self, x):
         """ Note this should mirror call """
         assert x.shape[2] == global_vars.NUM_SNPS
+
+        # images, dists = x[:, :, :, :-1], x[:, :, :, -1]
+        # image_conv, dist_conv = self.conv1(images), self.conv1(dists)
+        # image_pool, dist_pool = self.pool(image_conv), self.pool(dists_conv)
+
         x = self.conv1(x)
         x = self.pool(x)
+        # x = self.conv1x1_32(x)
         x = self.conv2(x)
         x = self.pool(x)
+        # x = self.conv1x1_64(x)
        
 
         # note axis is 1 b/c first axis is batch
@@ -98,8 +108,10 @@ class OnePopModel(Model):
 
         x = self.conv1(x)
         x = self.pool(x)
+        # x = self.conv1x1_32(x)
         x = self.conv2(x)
         x = self.pool(x)
+        # x = self.conv1x1_64(x)
 
         # note axis is 1 b/c first axis is batch
         # can try max or sum as the permutation-invariant function

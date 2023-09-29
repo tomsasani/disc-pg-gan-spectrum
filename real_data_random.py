@@ -72,10 +72,10 @@ def read_exclude(fh: str) -> IntervalTree:
 def prep_real_region(
     haplotypes: np.ndarray,
     positions: np.ndarray,
-    reference_alleles: np.ndarray,
-    alternate_alleles: np.ndarray,
-    ancestor: mutyper.Ancestor,
-    chrom: str,
+    # reference_alleles: np.ndarray,
+    # alternate_alleles: np.ndarray,
+    # ancestor: mutyper.Ancestor,
+    # chrom: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     prepare the feature array for a real region.
@@ -92,10 +92,10 @@ def prep_real_region(
     n_snps, n_haps = haplotypes.shape
     assert n_snps == global_vars.NUM_SNPS
 
-    X = np.zeros((n_snps, n_haps), dtype=np.float32)
+    # X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
 
     # loop over SNPs
-    for vi in range(n_snps):
+    # for vi in range(n_snps):
         # only include mutations that occur at a confidently polarized
         # nucleotide in the ancestral reference genome.
         # NOTE: we do this so that we only include mutations that occurred
@@ -109,9 +109,9 @@ def prep_real_region(
         #     alternate_alleles[vi][0].decode("utf-8"),
         # )
         # mut_i = global_vars.MUT2IDX[">".join(mutation)]
-        X[vi, :] = haplotypes[vi]
+        # X[vi, :] = haplotypes[vi]
 
-    X = np.expand_dims(X, axis=2)
+    X = np.expand_dims(haplotypes, axis=2)
 
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
@@ -172,14 +172,14 @@ class RealDataRandomIterator:
         print ("new", self.haplotypes.shape)
 
         self.positions = callset['variants/POS']
-        self.reference_alleles = callset['variants/REF']
-        self.alternate_alleles = callset['variants/ALT']
+        # self.reference_alleles = callset['variants/REF']
+        # self.alternate_alleles = callset['variants/ALT']
 
         self.num_haplotypes = self.haplotypes.shape[1]
 
         # read in ancestral sequence using mutyper
-        ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
-        self.ancestor = ancestor
+        # ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
+        # self.ancestor = ancestor
 
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
@@ -278,14 +278,14 @@ class RealDataRandomIterator:
             region, positions = prep_real_region(
                 haps,
                 sites,
-                self.reference_alleles[start_idx:end_idx],
-                self.alternate_alleles[start_idx:end_idx],
-                self.ancestor,
-                chromosome,
+                # self.reference_alleles[start_idx:end_idx],
+                # self.alternate_alleles[start_idx:end_idx],
+                # self.ancestor,
+                # chromosome,
             )
-            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
-            root_dist = get_root_nucleotide_dist(sequence)
-            return region, root_dist, positions
+            # sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            # root_dist = get_root_nucleotide_dist(sequence)
+            return region, positions
 
         # try again recursively if not in accessible region
         else:
@@ -382,18 +382,18 @@ class RealDataRandomIterator:
         )
 
         # store the root distribution of nucleotides in each region
-        root_dists = np.zeros((batch_size, 4))
+        # root_dists = np.zeros((batch_size, 4))
         # store the lengths of the sampled regions
         region_lens = np.zeros(batch_size)
 
         for i in range(batch_size):
-            region, root_dist, positions = self.sample_real_region()
+            region, positions = self.sample_real_region()
             region_lens[i] = np.max(positions) - np.min(positions)
             fixed_region = util.process_region(region, positions, norm_len)
             regions[i] = fixed_region
-            root_dists[i] = root_dist
+            # root_dists[i] = root_dist
 
-        return regions, root_dists, region_lens
+        return regions, region_lens
 
 
 if __name__ == "__main__":

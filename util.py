@@ -222,7 +222,7 @@ def process_region(
         # add first channels of mutation spectra
         middle_X = np.transpose(X[mid - half_S:mid + half_S, :, :], (1, 0, 2))
         # sort by genetic similarity
-        region[:, :, :-1] = major_minor(sum_across_channels(middle_X))
+        region[:, :, :-1] = major_minor(middle_X)
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
         distances_tiled = np.tile(distances[mid - half_S:mid + half_S], (n_haps, 1))
@@ -233,7 +233,7 @@ def process_region(
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(sum_across_channels(np.transpose(X, (1, 0, 2))))
+        region[:, half_S - mid:mid + other_half_S, :-1] = major_minor(np.transpose(X, (1, 0, 2)))
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
@@ -267,14 +267,19 @@ def major_minor(matrix):
         for mut_i in range(n_channels):
             # in this channel, figure out whether this site has any 
             # derived alleles
-            haplotype_sum = np.sum(matrix[:, site_i, mut_i])
+            haplotypes = matrix[:, site_i, mut_i]
             # if not, we'll mask all haplotypes at this site on this channel,
             # leaving the channel with the actual mutation unmasked
-            if haplotype_sum > (n_haps / 2):
+            if np.sum(haplotypes) > (n_haps / 2):
                 # if greater than 50% of haplotypes are ALT, reverse
                 # the REF/ALT polarization
-                matrix[:, site_i, mut_i] = 1 - matrix[:, site_i, mut_i]
+                haplotypes = 1 - haplotypes
+            # if np.sum(haplotypes) > 0:
+            #     haplotypes[haplotypes == 0] = -1
 
+            matrix[:, site_i, mut_i] = haplotypes
+            
+            
     matrix[matrix == 0] = -1
     
     return matrix

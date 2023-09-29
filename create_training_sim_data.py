@@ -28,7 +28,7 @@ def main(args):
     print (f"Creating VCF and FA for {args.chrom} with length {args.length}")
 
     # simulate a chromosome
-    seed = np.random.randint(0, 2**32)
+    seed = np.random.randint(1, 2**32)
     # simulate the reference
     reference = create_reference(seq_length=args.length)
     # get the true root distribution on this chromosome
