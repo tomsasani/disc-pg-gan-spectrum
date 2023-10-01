@@ -94,7 +94,7 @@ def simulated_annealing(
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project=f"mutator-ml-spectra-{current_date}",
+        project=f"mutator-ml",
 
         # track hyperparameters and run metadata
         config={
@@ -123,16 +123,16 @@ def simulated_annealing(
     # NOTE: should really generate root dists to sample from (for measuring
     # generator loss) by randomly sampling between the min
     # and max for each nucleotide as measured empirically
-    #prev_root_dists = np.zeros((4, global_vars.BATCH_SIZE))
-    prev_root_dists = np.tile(
-        pg_gan.exp_root_dist,
-        (global_vars.BATCH_SIZE, 1),
-    )
+    # prev_root_dists = np.zeros((4, global_vars.BATCH_SIZE))
+    # prev_root_dists = np.tile(
+    #     pg_gan.exp_root_dist,
+    #     (global_vars.BATCH_SIZE, 1),
+    # )
     # after discriminator pre-training, figure out our Generator loss.
     # specifically, generate a bunch of fake data using whatever the current
     # parameter values are, and figure out how good the Discriminator is at
     # figuring out that it's all fake.
-    loss_current = pg_gan.generator_loss(param_current, prev_root_dists, prev_region_lens)
+    loss_current = pg_gan.generator_loss(param_current, prev_region_lens)
 
     print("Current params, Current generator loss", param_current, loss_current)
 
@@ -178,7 +178,7 @@ def simulated_annealing(
                 # good our discriminator is at telling that it's fake.
                 loss_proposal = pg_gan.generator_loss(
                     param_proposal,
-                    prev_root_dists,
+                    # prev_root_dists,
                     prev_region_lens,
                 )
                 # if our Generator's loss is better than the best so far *in this iteration*, keep track of
@@ -213,7 +213,7 @@ def simulated_annealing(
             generator.update_params(param_current)
             # NOTE: should we be using the previous iteration's root distribution
             # as the root distribution for this iteration's generator loss?
-            real_acc, fake_acc, _ = pg_gan.train_sa(NUM_BATCH, iteration=i)
+            real_acc, fake_acc, _ = pg_gan.train_sa(NUM_BATCH)
 
         # if we shouldn't accept the current set of parameters for the Generator, move on to the
         # next iteration.
@@ -279,7 +279,7 @@ class PG_GAN:
         # need in order to reach NUM_SNPs. this way, we don't incentivize our
         # generator to increase the mutation rate to get NUM_SNPs if the L variable is
         # smaller than it should be
-        _, real_root_dists, real_region_lens = iterator.real_batch(1_000, batch_size=1)
+        _, real_region_lens = iterator.real_batch(1, batch_size=10_000)
 
         exp_region_length = int(np.max(real_region_lens) * 1.5) # heuristic to ensure right size
         print (f"Region length that should give us {global_vars.NUM_SNPS} SNPs is: {exp_region_length}")
@@ -287,11 +287,11 @@ class PG_GAN:
         # generator loss. # NOTE: we should probably generate random root distributions
         # wihtin the 95th percentile of root distributions observed across these, instead
         # of a constant mean
-        exp_root_dist = np.median(real_root_dists, axis=0)
-        print (f"Root distribution that should be average is {exp_root_dist}")
+        # exp_root_dist = np.median(real_root_dists, axis=0)
+        # print (f"Root distribution that should be average is {exp_root_dist}")
 
         self.norm_len = exp_region_length
-        self.exp_root_dist = exp_root_dist
+        # self.exp_root_dist = exp_root_dist
 
     def disc_pretraining(self, num_batches: int):
         """
@@ -328,32 +328,37 @@ class PG_GAN:
         self.generator.update_params(s_best)
         return s_best
 
-    def train_sa(self, num_batches: int, iteration: int = 0):
+    def train_sa(self, num_batches: int):
         """
         Main training function. Comprises a single epoch with `num_batches`.
         """
 
         for epoch in tqdm.tqdm(range(num_batches)):
             # sample a batch of real regions
-            real_regions, real_root_dists, real_region_lens = self.iterator.real_batch(self.norm_len)
+            real_regions, real_region_lens = self.iterator.real_batch(self.norm_len)
 
             # perform a training step. in a single training step,
             # we use the Generator to generate a set of corresponding
             # fake regions. we then ask the Discriminator to predict the
             # class labels for the real regions and the fake regions.
             region_lens_for_gen = np.array([self.norm_len] * global_vars.BATCH_SIZE)
-            outname = f"imgs/{iteration}.png" if epoch == 1 else None
 
             # NOTE: should we simulate regions using the same distribution
             # of region lengths as in the real data? esp. if we're using the
             # same root distributions? maybe not! need to ensure we have
             # enough bp to count suff. number of mutations, so use max
-            # length but keep true root dists
+            # length but keep true root dists. but, if we make the region length
+            # too large, we'll always get enough mutations in the region, even if
+            # the population parameters are not sufficient.
+
+            # NOTE: the real question is whether we should divide the inter-SNP distances
+            # by a constant, or by the actuall region length. i think we need to divide by
+            # a constant, so that the inter-SNP distances are just normalized versions of 
+            # the actualy base pair distances.
             real_acc, fake_acc, disc_loss = self.train_step(
                 real_regions,
-                real_root_dists,
+                # real_root_dists,
                 region_lens_for_gen,
-                outname=outname,
             )
 
             # every 100th epoch, print the accuracy
@@ -376,7 +381,7 @@ class PG_GAN:
     def generator_loss(
         self,
         proposed_params: List[Union[int, float]],
-        root_dists: np.ndarray,
+        # root_dists: np.ndarray,
         region_lens: np.ndarray,
     ):
         """ Generator loss """
@@ -389,7 +394,7 @@ class PG_GAN:
         # that is close to a real region. to this end, we actually use the prevoius iteration's
         # distribution of root distributions gathered from the real data.
         generated_regions = self.generator.simulate_batch(
-            root_dists,
+            # root_dists,
             region_lens,
             self.norm_len,
             params=proposed_params,
@@ -400,50 +405,18 @@ class PG_GAN:
 
         return loss.numpy()
 
-    def train_step(self, real_regions, real_root_dists, real_region_lens, outname = None):
+    def train_step(self, real_regions, real_region_lens, outname = None):
         """One mini-batch for the discriminator"""
 
         with tf.GradientTape() as disc_tape:
             # use current Generator params to create a set of fake
             # regions that corresopnd to the `real_regions` input
             generated_regions = self.generator.simulate_batch(
-                real_root_dists,
+                # real_root_dists,
                 real_region_lens,
                 self.norm_len,
             )
-            # one_hot_nucs = real_regions[:, :, :, 1:-1]
-            # # at every site, figure out what the distribution
-            # # of mutation types is
-
-            # mutations = []
-            # for batch_i in range(global_vars.BATCH_SIZE):
-            #     for site_i in range(global_vars.NUM_SNPS):
-            #         hap_nucs = one_hot_nucs[batch_i, :, site_i, :]
-            #         haps, nucs = np.where(hap_nucs == 1)
-            #         nuc_, ct_ = np.unique(nucs, return_counts=True)
-            #         nuc_s = nuc_[np.argsort(ct_)]
-            #         mutation = []
-            #         for nuc_i in nuc_s:
-            #             true = global_vars.NUC_ORDER[nuc_i]
-            #             mutation.append(true)
-            #         if mutation[0] in ("G", "T"):
-            #             mutation = [global_vars.REVCOMP[m] for m in mutation]
-            #         mutations.append(">".join(mutation))
-            # print (Counter(mutations))
-
-            # if outname is not None:
-            #     n_to_plot = 1
-            #     to_plot = np.arange(n_to_plot)
-            #     f, axarr = plt.subplots(global_vars.NUM_CHANNELS, (n_to_plot * 2), figsize=(12, global_vars.NUM_CHANNELS * n_to_plot * 4))
-            #     for channel_i in np.arange(global_vars.NUM_CHANNELS):
-            #         for idx, plot_i in enumerate(to_plot):
-            #             sns.heatmap(real_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=True)
-            #             sns.heatmap(generated_regions[plot_i][:, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=True)
-            #     for idx in range(n_to_plot):
-            #         axarr[0, idx * 2].set_title("R")
-            #         axarr[0, (idx * 2) + 1].set_title("G")
-            #     f.tight_layout()
-            #     f.savefig(outname)
+            
             # predict class labels (fake or real) for the real regions
             real_output = self.discriminator(real_regions, training=True)
             # do the same for the fake/generated regions

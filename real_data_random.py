@@ -72,8 +72,8 @@ def read_exclude(fh: str) -> IntervalTree:
 def prep_real_region(
     haplotypes: np.ndarray,
     positions: np.ndarray,
-    reference_alleles: np.ndarray,
-    alternate_alleles: np.ndarray,
+    # reference_alleles: np.ndarray,
+    # alternate_alleles: np.ndarray,
     # ancestor: mutyper.Ancestor,
     # chrom: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -92,22 +92,17 @@ def prep_real_region(
     n_snps, n_haps = haplotypes.shape
     assert n_snps == global_vars.NUM_SNPS
 
-    X_one_hot = np.zeros((n_snps, n_haps, 4))
     X = np.zeros((n_snps, n_haps), dtype=np.float32)
 
     # loop over SNPs
     for vi in range(n_snps):
-        # get indices of reference and alternate alleles
-        ref_i = global_vars.NUC2IDX[reference_alleles[vi].decode("utf-8")]
-        alt_i = global_vars.NUC2IDX[alternate_alleles[vi][0].decode("utf-8")]
-        
-        # figure out which haplotypes harbor ref and alt alleles
-        ref_haps = np.where(haplotypes[vi] == 0)[0]
-        alt_haps = np.where(haplotypes[vi] == 1)[0]
-        # increment the ref and alt nucleotides 
-        X_one_hot[vi, ref_haps, ref_i] = 1
-        X_one_hot[vi, alt_haps, alt_i] = 1
-        # mut_i = global_vars.MUT2IDX[">".join(mutation)]
+        # mutation = ancestor.mutation_type(
+        #     chrom,
+        #     int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
+        #     reference_alleles[vi].decode("utf-8"),
+        #     alternate_alleles[vi][0].decode("utf-8"),
+        # )
+        #mut_i = global_vars.MUT2IDX[">".join(mutation)]
         X[vi, :] = haplotypes[vi]
 
     X = np.expand_dims(haplotypes, axis=2)
@@ -118,13 +113,8 @@ def prep_real_region(
 
     X_filtered = X[seg, :, :]
     filtered_positions = positions[seg]
-    X_one_hot_filtered = X_one_hot[seg, :, :]
-    nuc_sum = np.sum(X_one_hot_filtered, axis=2)
-    try: assert np.all(nuc_sum == 1)
-    except: print ("Real data fails", np.min(nuc_sum), np.max(nuc_sum))
-    # return concatenated matrix of one-hot nucleotides
-    # and sites
-    return np.concatenate((X_filtered, X_one_hot_filtered), axis=2), filtered_positions
+
+    return X_filtered, filtered_positions
 
 def get_root_nucleotide_dist(sequence: str):
     """
@@ -187,10 +177,6 @@ class RealDataRandomIterator:
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
         self.autosomes = AUTOSOMES
-
-        # # map chromosome names to chromosome lengths
-        # seq2len = dict(zip(vcf_.seqnames, vcf_.seqlens))
-        # self.sequence_lengths = seq2len
 
         # exclude regions
         self.exclude_tree = read_exclude(bed_file) if bed_file is not None else None
@@ -281,14 +267,14 @@ class RealDataRandomIterator:
             region, positions = prep_real_region(
                 haps,
                 sites,
-                self.reference_alleles[start_idx:end_idx],
-                self.alternate_alleles[start_idx:end_idx],
+                # self.reference_alleles[start_idx:end_idx],
+                # self.alternate_alleles[start_idx:end_idx],
                 # self.ancestor,
                 # chromosome,
             )
-            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
-            root_dist = get_root_nucleotide_dist(sequence)
-            return region, root_dist, positions
+            # sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            # root_dist = get_root_nucleotide_dist(sequence)
+            return region, positions
 
         # try again recursively if not in accessible region
         else:
@@ -313,19 +299,18 @@ class RealDataRandomIterator:
         )
 
         # store the root distribution of nucleotides in each region
-        root_dists = np.zeros((batch_size, 4))
+        # root_dists = np.zeros((batch_size, 4))
         # store the lengths of the sampled regions
         region_lens = np.zeros(batch_size)
 
         for i in range(batch_size):
-            region, root_dist, positions = self.sample_real_region()
+            region, positions = self.sample_real_region()
             region_lens[i] = positions[-1] - positions[0]
             fixed_region = util.process_region(region, positions, norm_len)
             regions[i] = fixed_region
-            root_dists[i] = root_dist
-
+            # root_dists[i] = root_dist
         
-        return regions, root_dists, region_lens
+        return regions, region_lens
 
 
 if __name__ == "__main__":

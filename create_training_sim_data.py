@@ -11,7 +11,7 @@ from simulation import simulate_exp
 
 
 def create_reference(seq_length: int = 1_000_000):
-    nuc_dist = np.array([0.2, 0.3, 0.3, 0.2])
+    nuc_dist = np.array([0.25, 0.25, 0.25, 0.25])
     options = ["A", "C", "G", "T"]
     sequence = np.random.choice(options, p=nuc_dist, size=seq_length)
 
@@ -19,11 +19,6 @@ def create_reference(seq_length: int = 1_000_000):
 
 def main(args):
     params = param_set.ParamSet()
-
-    parameters = ["mu", "rho", "N1", "N2", "T1", "T2", "growth"]#, "conversion", "conversion_length"]
-    parameter_values = [1e-8, 1e-8, 9_000, 5_000, 2_000, 350, 5e-3]#, 5e-8, 2]
-
-    params.update(parameters, parameter_values)
 
     print (f"Creating VCF and FA for {args.chrom} with length {args.length}")
 
@@ -34,8 +29,7 @@ def main(args):
     # get the true root distribution on this chromosome
     root_dists = get_root_nucleotide_dist(reference)
     # generate the simulation using the true root dist on this chromosome
-    treeseq = simulate_exp(params, [100], root_dists, args.length, seed)
-    #print (f"{n_sites} variants on {chrom}")
+    treeseq = simulate_exp(params, [100], args.length, seed)
     # first convert to VCF
     with open(f"data/simulated/vcf/{args.chrom}.simulated.vcf", "w") as outfh:
         treeseq.write_vcf(outfh, contig_id=args.chrom)
@@ -43,7 +37,7 @@ def main(args):
 
     site_table = treeseq.tables.sites
     positions = site_table.position.astype(np.int64)
-    reference_alleles = tskit.unpack_strings(site_table.ancestral_state, site_table.ancestral_state_offset)
+    reference_alleles = tskit.unpack_strings(site_table.ancestral_state, site_table.ancestral_state_offset,)
 
     # refactor reference using true ancestral alleles and create hdf5
     reference[positions] = reference_alleles

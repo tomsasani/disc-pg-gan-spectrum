@@ -61,7 +61,7 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
+def simulate_exp(params, sample_sizes, region_len, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -97,12 +97,12 @@ def simulate_exp(params, sample_sizes, root_dist, region_len, seed):
     )
 
     # define mutation model
-    mutation_model = parameterize_mutation_model(root_dist)
+    # mutation_model = parameterize_mutation_model(root_dist)
 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        model=mutation_model,
+        # model=mutation_model,
         random_seed=seed,
         discrete_genome=True,
     )

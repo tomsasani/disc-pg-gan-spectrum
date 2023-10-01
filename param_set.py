@@ -81,9 +81,9 @@ class ParamSet:
         self.T1 = Parameter(2000, 1500, 5000, "T1")
         self.T2 = Parameter(350, 100, 1500, "T2")
         # recombination rate
-        self.rho = Parameter(1e-8, 1e-9, 1e-7, "rho")
+        self.rho = Parameter(1.25e-8, 1e-9, 1e-7, "rho")
         # mutation rate
-        self.mu = Parameter(1e-8, 1e-9, 1e-7, "mu")
+        self.mu = Parameter(1.25e-8, 1e-9, 1e-7, "mu")
         # population growth parameter
         self.growth = Parameter(0.005, 0.0, 0.05, "growth")
         # ratio of transitions to transversions (used to paramterize
@@ -93,6 +93,10 @@ class ParamSet:
         self.conversion = Parameter(5e-8, 5e-9, 5e-6, "conversion")
         # gene conversion track length
         self.conversion_length = Parameter(2, 10, 1, "conversion_length")
+        self.mutator_emergence = Parameter(100, 500, 5000, "Tm")
+        self.mutator_length = Parameter(10_000, 15_000, 20_000, "Lm")
+        self.mutator_start = Parameter(1, 10_000, 30_000, "Ls")
+        self.mutator_effect = Parameter(1, 1.5, 2, "Em")
 
 
     def update(self, names, values):
