@@ -14,6 +14,8 @@ from typing import List
 import global_vars
 import util
 import param_set
+import matplotlib.pyplot as plt
+import demesdraw
 
 def get_transition_matrix():
 
@@ -61,7 +63,7 @@ def parameterize_mutation_model(root_dist: np.ndarray):
 # SIMULATION
 ################################################################################
 
-def simulate_exp(params, sample_sizes, region_len, seed):
+def simulate_exp(params, sample_sizes, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -70,7 +72,11 @@ def simulate_exp(params, sample_sizes, region_len, seed):
     demography = msprime.Demography()
     # at present moment, create population A with the size it should be
     # following its period of exponential growth
-    demography.add_population(name="A", initial_size=N0, growth_rate=params.growth.value)
+    demography.add_population(
+        name="A",
+        initial_size=N0,
+        growth_rate=params.growth.value,
+    )
     # T2 generations in the past, change the population size to be N2
     demography.add_population_parameters_change(
         population="A",
@@ -84,16 +90,19 @@ def simulate_exp(params, sample_sizes, region_len, seed):
         population="A",
         time=params.T1.value,
         initial_size=params.N1.value,
-        growth_rate=0,
+        #growth_rate=0,
     )
 
+    # sample sample_sizes monoploid haplotypes from the diploid population
     ts = msprime.sim_ancestry(
-        samples=sum(sample_sizes),
+        #samples=sum(sample_sizes),
+        samples = [msprime.SampleSet(sum(sample_sizes), ploidy=1)],
         demography=demography,
-        sequence_length=region_len,
+        sequence_length=global_vars.L,
         recombination_rate=params.rho.value,
-        discrete_genome=True,
+        discrete_genome=False, # ensure no multi-allelics
         random_seed=seed,
+        ploidy=2,
     )
 
     # define mutation model
@@ -102,9 +111,150 @@ def simulate_exp(params, sample_sizes, region_len, seed):
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
-        # model=mutation_model,
+        #model=msprime.JC69(state_independent=False),
+        #model=msprime.BinaryMutationModel(), # ensure no silent
         random_seed=seed,
-        discrete_genome=True,
+        discrete_genome=False,
+    )
+
+    return mts
+
+def simulate_im(params, sample_sizes, seed):
+    """Note this is a 2 population model"""
+    assert len(sample_sizes) == 2
+
+    # condense params
+    N1 = params.N1.value
+    N2 = params.N2.value
+    T_split = params.T_split.value
+    N_anc = params.N_anc.value
+    mig = params.mig.value
+
+    population_configurations = [
+        msprime.PopulationConfiguration(sample_size=sample_sizes[0],
+            initial_size = N1),
+        msprime.PopulationConfiguration(sample_size=sample_sizes[1],
+            initial_size = N2)]
+
+    # no migration initially
+    mig_time = T_split/2
+
+    # directional (pulse)
+    if mig >= 0:
+        # migration from pop 1 into pop 0 (back in time)
+        mig_event = msprime.MassMigration(time = mig_time, source = 1,
+            destination = 0, proportion = abs(mig))
+    else:
+        # migration from pop 0 into pop 1 (back in time)
+        mig_event = msprime.MassMigration(time = mig_time, source = 0,
+            destination = 1, proportion = abs(mig))
+
+    demographic_events = [
+        mig_event,
+    # move all in deme 1 to deme 0
+    msprime.MassMigration(
+    time = T_split, source = 1, destination = 0, proportion = 1.0),
+        # change to ancestral size
+        msprime.PopulationParametersChange(time=T_split, initial_size=N_anc,
+            population_id=0)
+    ]
+
+    # simulate tree sequence
+    ts = msprime.simulate(
+    population_configurations = population_configurations,
+    demographic_events = demographic_events,
+    mutation_rate = params.mu.value,
+    length = global_vars.L,
+    recombination_rate = params.rho.value,
+        random_seed = seed)
+
+    return ts
+
+def simulate_gough(params, sample_sizes, seed):
+    """Note this is a 2 population model"""
+    assert len(sample_sizes) == 2
+
+    # N_gough = params.N_bottleneck.value / math.exp(-params.growth.value * params.T_bottleneck.value)
+
+    # size = n_bot / e^(-g * t_bot)
+
+    # size * (e^(-g * t_bot)) = n_bot
+
+    # e ^ (-g * t_bot) = n_bot / size
+
+    # -g * t_bot = ln(n_bot / size)
+
+    # -g = ln(n_bot / size) / t_bot
+
+    # g = -1 * ln(n_bot / size) / t_bot
+
+    # calculate growth rate given colonization Ne and current Ne
+    gough_growth = -1 * np.log(params.N_colonization.value / params.N_gough.value) / params.T_colonization.value
+
+    demography = msprime.Demography()
+    # at present moment, gough population which has grown exponentially
+    demography.add_population(
+        name="gough",
+        initial_size=params.N_gough.value,
+        growth_rate=gough_growth,
+    )
+    demography.add_population(
+        name="mainland",
+        initial_size=params.N_mainland.value,
+        growth_rate=0,
+    )
+    demography.add_population(
+        name="ancestral",
+        initial_size=params.N_mainland.value,
+        growth_rate=0,
+    )
+    demography.set_migration_rate(
+        source="gough",
+        dest="mainland",
+        rate=params.island_migration_rate.value,
+    )
+    demography.add_population_split(
+        time=params.T_colonization.value,
+        derived=["gough", "mainland"],
+        ancestral="ancestral",
+    )
+
+    # demography.add_instantaneous_bottleneck(
+    #     time=params.T_mainland_bottleneck.value,
+    #     population="ancestral",
+    #     strength=params.D_mainland_bottleneck.value
+    # )
+
+    # graph = msprime.Demography.to_demes(demography)
+    # f, ax = plt.subplots()  # use plt.rcParams["figure.figsize"]
+    # demesdraw.tubes(graph, ax=ax, seed=1)
+    # f.savefig('gough_demography.png', dpi=200)
+
+    # sample sample_sizes monoploid haplotypes from the diploid population
+    ts = msprime.sim_ancestry(
+        #samples=sum(sample_sizes),
+        samples=[
+            msprime.SampleSet(sample_sizes[0], population="gough", ploidy=2),
+            msprime.SampleSet(sample_sizes[1], population="mainland", ploidy=2),
+        ],
+        demography=demography,
+        sequence_length=global_vars.L,
+        recombination_rate=params.mouse_rho.value,
+        discrete_genome=False,  # ensure no multi-allelics
+        random_seed=seed,
+        ploidy=2,
+    )
+
+    # define mutation model
+    # mutation_model = parameterize_mutation_model(root_dist)
+
+    mts = msprime.sim_mutations(
+        ts,
+        rate=params.mouse_mu.value,
+        #model=msprime.JC69(state_independent=False),
+        #model=msprime.BinaryMutationModel(), # ensure no silent
+        random_seed=seed,
+        discrete_genome=False,
     )
 
     return mts
@@ -112,4 +262,4 @@ def simulate_exp(params, sample_sizes, region_len, seed):
 if __name__ == "__main__":
     params = param_set.ParamSet()
 
-    simulate_exp(params, [100], 50_000, 3232)
+    simulate_gough(params, [30, 30], 4242)

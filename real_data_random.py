@@ -92,29 +92,14 @@ def prep_real_region(
     n_snps, n_haps = haplotypes.shape
     assert n_snps == global_vars.NUM_SNPS
 
-    X = np.zeros((n_snps, n_haps), dtype=np.float32)
+    seg = util.find_segregating_idxs(haplotypes)
+    # if seg.shape[0] < 36:
+    #     print (f"{seg.shape[0] / 36} segregating sites in real data")
 
-    # loop over SNPs
-    for vi in range(n_snps):
-        # mutation = ancestor.mutation_type(
-        #     chrom,
-        #     int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
-        #     reference_alleles[vi].decode("utf-8"),
-        #     alternate_alleles[vi][0].decode("utf-8"),
-        # )
-        #mut_i = global_vars.MUT2IDX[">".join(mutation)]
-        X[vi, :] = haplotypes[vi]
-
-    X = np.expand_dims(haplotypes, axis=2)
-    # remove sites that are non-segregating (i.e., if we didn't
-    # add any information to them because they were multi-allelic
-    # or because they were a silent mutation)
-    seg = util.find_segregating_idxs(X)
-
-    X_filtered = X[seg, :, :]
+    X_filtered = haplotypes[seg, :]
     filtered_positions = positions[seg]
 
-    return X_filtered, filtered_positions
+    return haplotypes, positions
 
 def get_root_nucleotide_dist(sequence: str):
     """
@@ -144,35 +129,40 @@ def get_root_nucleotide_dist(sequence: str):
 
 class RealDataRandomIterator:
 
-    def __init__(self, hdf_fh: str, ref_fh: str, bed_file: str, seed: int):
+    def __init__(self, hdf_fh: str, bed_file: str, seed: int):
 
         self.rng = np.random.default_rng(seed)
 
         callset = h5py.File(hdf_fh, mode='r')
-        # vcf_ = VCF(vcf_fh, gts012=True)
-        # self.vcf = vcf_
 
         # array of chromosomes
         self.chromosomes = callset['variants/CHROM']
 
         # array of haplotypes
         raw_gts = callset['calldata/GT']
+
         newshape = (raw_gts.shape[0], -1)
-        self.haplotypes = np.reshape(raw_gts, newshape)
-        self.haplotypes[self.haplotypes < 0] = 0
+        # NOTE: processing so that we have individual haplotypes
+        haplotypes = np.reshape(raw_gts, newshape)
+        # grab half of the haplotypes to use for the iterator.
+        # NOTE: this is only necessary if we use the simulated data,
+        # since the simulated data only report a single allele at each
+        # site in the VCF. if we're using "real" data, we can simply reshape
+        # the numpy array.
+        self.haplotypes = haplotypes
+        print (np.any(haplotypes < 0))
+        #self.haplotypes[self.haplotypes < 0] = 0
 
         print("raw", raw_gts.shape)
         print ("new", self.haplotypes.shape)
 
         self.positions = callset['variants/POS']
-        self.reference_alleles = callset['variants/REF']
-        self.alternate_alleles = callset['variants/ALT']
 
         self.num_haplotypes = self.haplotypes.shape[1]
 
         # read in ancestral sequence using mutyper
-        ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
-        self.ancestor = ancestor
+        # ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
+        # self.ancestor = ancestor
 
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
@@ -309,7 +299,7 @@ class RealDataRandomIterator:
             fixed_region = util.process_region(region, positions, norm_len)
             regions[i] = fixed_region
             # root_dists[i] = root_dist
-        
+
         return regions, region_lens
 
 

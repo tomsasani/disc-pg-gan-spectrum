@@ -86,18 +86,29 @@ class ParamSet:
         self.mu = Parameter(1.25e-8, 1e-9, 1e-7, "mu")
         # population growth parameter
         self.growth = Parameter(0.005, 0.0, 0.05, "growth")
+
+        self.N_anc = Parameter(15000, 1000, 25000, "N_anc")
+        self.T_split = Parameter(2000, 500, 20000, "T_split")
+        self.mig = Parameter(0.05, -0.2, 0.2, "mig")
         # ratio of transitions to transversions (used to paramterize
         # the felsenstein 84 mutation model in msprime)
-        self.kappa = Parameter(2.0, 0.1, 3.0, "kappa")
-        # gene conversion rate
-        self.conversion = Parameter(5e-8, 5e-9, 5e-6, "conversion")
-        # gene conversion track length
-        self.conversion_length = Parameter(2, 10, 1, "conversion_length")
+        # self.kappa = Parameter(2.0, 0.1, 3.0, "kappa")
+        # self.conversion = Parameter(5e-8, 5e-9, 5e-6, "conversion")
+        # self.conversion_length = Parameter(2, 10, 1, "conversion_length")
         self.mutator_emergence = Parameter(100, 500, 5000, "Tm")
         self.mutator_length = Parameter(10_000, 15_000, 20_000, "Lm")
         self.mutator_start = Parameter(1, 10_000, 30_000, "Ls")
         self.mutator_effect = Parameter(1, 1.5, 2, "Em")
 
+        self.N_gough = Parameter(3_000, 1_000, 25_000, "N_gough")
+        self.N_mainland = Parameter(200_000, 50_000, 250_000, "N_mainland")
+        self.T_colonization = Parameter(1_800, 100, 2_500, "T_colonization")
+        self.N_colonization = Parameter(150, 10, 1_000, "N_colonization")
+        self.T_mainland_bottleneck = Parameter(10_000, 3_000, 20_000, "T_mainland_bottleneck")
+        self.D_mainland_bottleneck = Parameter(5_000, 2_000, 9_000, "D_mainland_bottleneck")
+        self.island_migration_rate = Parameter(8e-4, 0, 1e-3, "island_migration_rate")
+        self.mouse_mu = Parameter(6.5e-9, 1e-9, 1e-8, "mouse_mu")
+        self.mouse_rho = Parameter(1e-8, 1e-9, 1e-7, "mouse_rho")
 
     def update(self, names, values):
         """Based on generator proposal, update desired param values"""

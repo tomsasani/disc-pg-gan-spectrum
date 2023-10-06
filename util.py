@@ -41,76 +41,6 @@ def sort_min_diff(X):
     return v[1][smallest]
     #return X[v[1][smallest]]
 
-def sum_across_channels(X: np.ndarray) -> np.ndarray:
-    summed = np.sum(X, axis=2)
-    assert np.max(summed) == 1
-    return np.expand_dims(summed, axis=2)
-
-def process_windows(X: np.ndarray, positions: np.ndarray, norm_len: int) -> np.ndarray:
-
-    n_sites, n_haps, n_channels = X.shape
-
-    # create NUM_WINDOWS windows
-    windows = np.arange(0, global_vars.NUM_SNPS + global_vars.WINDOW_SIZE, step=global_vars.WINDOW_SIZE)
-    window_starts, window_ends = windows[:-1], windows[1:]
-
-    dists = inter_snp_distances(positions, norm_len)
-
-    # figure out the half-way point (measured in numbers of sites)
-    # in the input array
-    mid = n_sites // 2
-    half_S = global_vars.NUM_SNPS // 2
-
-    # define a new multi-dimensional array to store counts at every site
-    X_new = np.zeros((global_vars.NUM_SNPS, n_haps, n_channels), dtype=np.float32)
-    dist_new = np.zeros((global_vars.NUM_SNPS), dtype=np.float32)
-
-    # if we have more than enough segregating sites to fill the windows...
-    if mid >= half_S:
-        # subset the SNPs in the array to be NUM_WINDOW * WINDOW_SIZE and add to
-        # the updated array
-        X_new[:, :, :] = X[mid - half_S:mid + half_S, :, :]
-        dist_new[:] = dists[mid - half_S:mid + half_S]
-        
-    # if we don't have enough segregating sites to fill the windows...
-    else:
-        # don't subset the SNPs in the input array. use the complete genotype array
-        # but just add it to the center of the main array
-        other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
-        X_new[half_S - mid:mid + other_half_S, :, :] = X
-        dist_new[half_S - mid:mid + other_half_S] = dists
-
-    # define a new multi-dimensional array to store windowed sums across channels
-    windowed_sums = np.zeros((window_starts.shape[0], n_haps, n_channels))
-    # store median inter-SNP distance in each window
-    windowed_dists = np.zeros((window_starts.shape[0]))
-
-    # now, for every window, count the total number of derived alleles on haplotypes
-    for i, (s, e) in enumerate(zip(window_starts, window_ends)):
-        # get count of derived alleles in window
-        derived_sum = np.nansum(X_new[s:e, :, :], axis=0)
-        # divide counts by the maximum possible value in a given channel (which
-        # is exactly equal to the window size)
-        derived_sum_rescaled = derived_sum / global_vars.WINDOW_SIZE
-        derived_sum_rescaled[np.isnan(derived_sum_rescaled)] = 0.
-        windowed_sums[i, :, :] = derived_sum_rescaled
-        median_dist = np.median(dist_new[s:e])
-        windowed_dists[i] = median_dist
-
-    windowed_sums_totals = np.sum(windowed_sums, axis=2)
-    max_val = np.max(windowed_sums_totals)
-    assert np.isclose(max_val, 1.) or max_val < 1
-
-    # convert distances to correct shape
-    windowed_dists = np.expand_dims(np.tile(windowed_dists, (n_haps, 1)).T, axis=2)
-    combined_channels = np.concatenate((windowed_sums, windowed_dists), axis=2)
-
-    return np.transpose(combined_channels, (1, 0, 2))
-
-
-def reorder(X: np.ndarray):
-    return np.transpose(X, (1, 0, 2))
-
 def parse_hapmap_empirical_prior(files):
     """
     Parse recombination maps to create a distribution of recombintion rates to
@@ -161,22 +91,26 @@ def parse_hapmap_empirical_prior(files):
 
 def find_segregating_idxs(X: np.ndarray):
 
-    n_snps, n_haps, n_muts = X.shape
-
+    n_snps, n_haps = X.shape
+    # initialize mask to store "good" sites
+    to_keep = np.ones(n_snps)
+    # find sites where there are bi-allelics
+    multi_allelic = np.where(np.any(X > 1, axis=1))[0]
+    if multi_allelic.shape[0] > 0: print ("found multi-allelic")
+    to_keep[multi_allelic] = 0
     # remove sites that are non-segregating (i.e., if we didn't
     # add any information to them because they were multi-allelic
     # or because they were a silent mutation)
-    summed_across_channels = np.sum(X, axis=2)
-    summed_across_haplotypes = np.sum(summed_across_channels, axis=1)
-    seg = np.where((summed_across_haplotypes > 0) & (summed_across_haplotypes < n_haps))[0]
-    return seg
+    acs = np.count_nonzero(X, axis=1)
+    non_segregating = np.where((acs == 0) | (acs == n_haps))[0]
+    if non_segregating.shape[0] > 0: print ("found non seg")
+    to_keep[non_segregating] = 0
+    return np.where(to_keep)[0]
 
 
 def process_region(
     X: np.ndarray,
     positions: np.ndarray,
-    norm_len: int,
-    sum_channels: bool = False,
 ) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
@@ -196,10 +130,13 @@ def process_region(
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps, n_channels = X.shape
+    n_sites, n_haps = X.shape
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
-    
+
+    # check for multi-allelics
+    #assert np.max(X) == 1
+
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
     mid = n_sites // 2
@@ -212,12 +149,10 @@ def process_region(
     )
 
     # should we divide by the *actual* region length?
-    distances = inter_snp_distances(positions, norm_len)
+    distances = inter_snp_distances(positions, global_vars.L)
 
     # first, transpose the full input matrix to be n_haps x n_snps
-    X = np.transpose(X, (1, 0, 2))[:, :, 0]
-    if sum_channels:
-        X = np.expand_dims(np.sum(X, axis=2), axis=2)
+    X = X.T
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
@@ -244,6 +179,8 @@ def process_region(
         # add final channel of inter-snp distances
         region[:, i:j, -1] = distances_tiled
 
+    # np.random.shuffle(region)
+
     return region
 
 def parse_params(param_input):
@@ -266,10 +203,10 @@ def major_minor(matrix):
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
     n_haps, n_sites = matrix.shape
-    
+
     # figure out the channel in which each mutation occurred
-    for site_i in range(n_sites):        
-        # in this channel, figure out whether this site has any 
+    for site_i in range(n_sites):
+        # in this channel, figure out whether this site has any
         # derived alleles
         haplotypes = matrix[:, site_i]
         # if not, we'll mask all haplotypes at this site on this channel,
@@ -278,13 +215,11 @@ def major_minor(matrix):
             # if greater than 50% of haplotypes are ALT, reverse
             # the REF/ALT polarization
             haplotypes = 1 - haplotypes
-        # if np.sum(haplotypes) > 0:
-        #     haplotypes[haplotypes == 0] = -1
 
         matrix[:, site_i] = haplotypes
-      
+
     matrix[matrix == 0] = -1
-    
+
     return matrix
 
 
@@ -294,20 +229,18 @@ def parse_args():
     p = argparse.ArgumentParser()
 
     p.add_argument(
-        '--data',
+        '-data',
         type=str,
         help='real data file in hdf5 format',
-        required=True,
     )
     p.add_argument(
-        '--ref',
+        '-ref',
         type=str,
         help="path to ancestral reference",
-        required=True,
     )
 
     p.add_argument(
-        '--disc',
+        '-disc',
         type=str,
         dest='disc',
         help='location to store discriminator',
@@ -350,6 +283,11 @@ def parse_args():
         action="store_true",
         help="whether to use a 7-channel mutation spectrum image instead of a 2-channel mutation image",
     )
+    p.add_argument(
+        "-entropy",
+        default="n",
+        type=str,
+    )
 
     args = p.parse_args()
 
@@ -362,41 +300,52 @@ def process_args(args):
     parameters = parse_params(args.params) # desired params
     param_names = [p.name for p in parameters]
 
-    # initialize the Iterator object, which will iterate over
-    # the VCF and grab regions with NUM_SNPS
-    iterator = real_data_random.RealDataRandomIterator(
-        hdf_fh=args.data,
-        ref_fh=args.ref,
-        bed_file=args.bed,
-        seed=args.seed,
-    )
-    # figure out how many haplotypes are being sampled by the Iterator from the VCF
-    h_total = iterator.num_haplotypes
+    # always using the EXP model, with a single population
+    num_pops = 2
+    simulator = simulation.simulate_im
+
+    # if a data path is specified, we'll use those data for
+    # the Iterator object.
+    if args.data is not None:
+        # initialize the Iterator object, which will iterate over
+        # the h5 file and grab regions with NUM_SNPS
+        iterator = real_data_random.RealDataRandomIterator(
+            hdf_fh=args.data,
+            bed_file=args.bed,
+            seed=args.seed,
+        )
+        h_total = iterator.num_haplotypes
+        sample_sizes = [h_total // num_pops for _ in range(num_pops)]
+        #sample_sizes = [14, 8]
+
+    # otherwise, we'll use the Generator
+    else:
+        sample_sizes = [global_vars.NUM_HAPLOTYPES // num_pops for _ in range(num_pops)]
+        iterator = generator.Generator(
+            simulator=simulator,
+            param_names=param_names,
+            sample_sizes=sample_sizes,
+            #sample_sizes = sample_sizes,
+            seed=args.seed,
+        )
+        h_total = global_vars.NUM_HAPLOTYPES
+
 
     print (f"ITERATOR is using {h_total} haplotypes")
-
-    # always using the EXP model, with a single population
-    num_pops = 1
-    simulator = simulation.simulate_exp
-
-    if (global_vars.FILTER_SIMULATED or global_vars.FILTER_REAL_DATA):
-        print("FILTERING SINGLETONS")
 
     # figure out how many haplotypes the Generator object should be simulating in each batch
     # we want this to match the number of haplotypes being sampled in the VCF
     #sample_size_total = ss_total if args.sample_size is None else args.sample_size
-    sample_sizes = [h_total // num_pops for _ in range(num_pops)]
-
-    print (f"GENERATOR is simulating {sample_sizes[0]} haplotypes")
+    print (f"GENERATOR is simulating {sum(sample_sizes)} haplotypes")
 
     gen = generator.Generator(
-        simulator,
-        param_names,
-        sample_sizes,
-        args.seed,
+        simulator=simulator,
+        param_names=param_names,
+        sample_sizes=sample_sizes,
+        seed=args.seed,
     )
 
-    return gen, iterator, parameters, sample_sizes
+    return gen, iterator, parameters, sample_sizes, args.entropy
 
 if __name__ == "__main__":
     # test major/minor and post-processing

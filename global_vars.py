@@ -3,6 +3,7 @@
 NUM_SNPS = 36 * 1      # number of seg sites, should be divisible by 4
 BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
 L = 50_000
+NUM_HAPLOTYPES = 198
 
 
 DEFAULT_SEED = 1833
