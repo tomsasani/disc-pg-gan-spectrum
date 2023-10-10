@@ -78,6 +78,7 @@ class ParamSet:
         # population sizes and bottleneck times
         self.N1 = Parameter(9000, 1000, 30000, "N1")
         self.N2 = Parameter(5000, 1000, 30000, "N2")
+        self.N3 = Parameter(12000, 1000, 30000, "N3")        
         self.T1 = Parameter(2000, 1500, 5000, "T1")
         self.T2 = Parameter(350, 100, 1500, "T2")
         # recombination rate
@@ -100,12 +101,12 @@ class ParamSet:
         self.mutator_start = Parameter(1, 10_000, 30_000, "Ls")
         self.mutator_effect = Parameter(1, 1.5, 2, "Em")
 
-        self.N_gough = Parameter(3_000, 1_000, 25_000, "N_gough")
-        self.N_mainland = Parameter(200_000, 50_000, 250_000, "N_mainland")
-        self.T_colonization = Parameter(1_800, 100, 2_500, "T_colonization")
-        self.N_colonization = Parameter(150, 10, 1_000, "N_colonization")
+        self.N_gough = Parameter(20_000, 2_000, 40_000, "N_gough")
+        self.N_mainland = Parameter(50_000, 15_000, 300_000, "N_mainland")
+        self.T_colonization = Parameter(100, 50, 1_500, "T_colonization")
+        self.N_colonization = Parameter(1_000, 10, 10_000, "N_colonization")
         self.T_mainland_bottleneck = Parameter(10_000, 3_000, 20_000, "T_mainland_bottleneck")
-        self.D_mainland_bottleneck = Parameter(5_000, 2_000, 9_000, "D_mainland_bottleneck")
+        self.D_mainland_bottleneck = Parameter(6e-4, 1e-4, 1e-2, "D_mainland_bottleneck")
         self.island_migration_rate = Parameter(8e-4, 0, 1e-3, "island_migration_rate")
         self.mouse_mu = Parameter(6.5e-9, 1e-9, 1e-8, "mouse_mu")
         self.mouse_rho = Parameter(1e-8, 1e-9, 1e-7, "mouse_rho")

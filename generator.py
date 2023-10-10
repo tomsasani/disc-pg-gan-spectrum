@@ -28,12 +28,14 @@ class Generator:
         sample_sizes,
         seed,
         reco_folder: str = None,
+        use_full_spectrum: bool = False,
     ):
         self.simulator = simulator
         self.param_names = param_names
         self.sample_sizes = sample_sizes
         self.num_haplotypes = sum(sample_sizes)
         self.rng = default_rng(seed)
+        self.use_full_spectrum = use_full_spectrum
 
         self.curr_params = None
 
@@ -46,6 +48,7 @@ class Generator:
 
     def simulate_batch(
         self,
+        root_dists: np.ndarray,
         batch_size: int = global_vars.BATCH_SIZE,
         params = [],
         treat_as_real: bool = False
@@ -64,9 +67,10 @@ class Generator:
         """
 
         # initialize matrix in which to store data
+        num_channels = 7 if self.use_full_spectrum else 2
         
         regions = np.zeros(
-            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
+            (batch_size, self.num_haplotypes, global_vars.NUM_SNPS, num_channels),
             dtype=np.float32)
 
         # set up parameters
@@ -77,11 +81,7 @@ class Generator:
             sim_params.update(self.param_names, self.curr_params)
         else:
             sim_params.update(self.param_names, params)
-
-        # if treat_as_real:
-        #     print ("Using simulated data for training: ", [sim_params.N1.value, sim_params.N2.value])
-        # else:
-        #     print ("Simulating to compare against real: ", [sim_params.N1.value, sim_params.N2.value])
+            
         # simulate each region
         for i in range(batch_size):
             # set random seed
@@ -92,19 +92,21 @@ class Generator:
             # to get the correct number of haplotypes.
             ts = self.simulator(
                 sim_params,
-                self.sample_sizes,
+                self.sample_sizes,#[ss // 2 for ss in self.sample_sizes],
+                root_dists[i],
                 seed,
             )
             # return 3D array
             region, positions = prep_simulated_region(ts)
             assert region.shape[0] == positions.shape[0]
-            region_formatted = util.process_region(region, positions)
+            region_formatted = util.process_region(region, positions, use_full_spectrum=self.use_full_spectrum)
             regions[i] = region_formatted
 
         return regions
     
     def real_batch(self, batch_size = global_vars.BATCH_SIZE):
-        return self.simulate_batch(batch_size=batch_size, treat_as_real=True)
+        root_dists = np.tile(np.array([0.25] * 4), (batch_size, 1))
+        return self.simulate_batch(root_dists, batch_size=batch_size, treat_as_real=True), root_dists
 
     def update_params(self, new_params):
         self.curr_params = new_params
@@ -117,19 +119,36 @@ def prep_simulated_region(ts) -> np.ndarray:
     # the genotype matrix returned by tskit is our expected output
     # n_snps x n_haps matrix. however, even multi-allelic variants
     # are encoded 0/1, regardless of the allele.
-    X = ts.genotype_matrix().astype(np.float32)
 
-    # get the positions from the "sites" table 
-    positions = ts.tables.sites.position
-    # count the number of sites reported in the "mutations"
-    # table. if there are multi-allelics, the same
-    # site will pop up more than once.
-    mutations = ts.tables.mutations
-    assert np.unique(mutations.site).shape[0] == mutations.site.shape[0]
+    # the genotype matrix returned by tskit is our expected output
+    # n_snps x n_haps matrix
+    n_snps, n_haps = ts.genotype_matrix().astype(np.float32).shape
+    X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
 
-    seg = util.find_segregating_idxs(X)
-    if seg.shape[0] < X.shape[0]:
-        print (f"{seg.shape[0] / X.shape[0]} segregating sites in simulated data")
+    for vi, var in enumerate(ts.variants()):
+        ref = var.alleles[0]
+        alt_alleles = var.alleles[1:]
+        gts = var.genotypes
+        # ignore multi-allelics
+        assert len(alt_alleles) == 1
+
+        alt = alt_alleles[0]
+        if ref in ("G", "T"):
+            ref, alt = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
+        # shouldn't be any silent mutations given transition matrix
+        assert ref != alt
+        mutation = ">".join([ref, alt])
+        mutation_idx = global_vars.MUT2IDX[mutation]
+        
+        X[vi, :, mutation_idx] = gts
+
+    site_table = ts.tables.sites
+    positions = site_table.position.astype(np.int64)
+    assert positions.shape[0] == X.shape[0]
+
+    # seg = util.find_segregating_idxs(X)
+    # if seg.shape[0] < X.shape[0]:
+    #     print (f"{seg.shape[0] / X.shape[0]} segregating sites in simulated data")
     #X_filtered = X[seg, :]
 
     #filtered_positions = positions[seg]

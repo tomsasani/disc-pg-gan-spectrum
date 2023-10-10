@@ -1,12 +1,14 @@
 import msprime
 import tensorflow as tf
-import sklearn 
+import sklearn
+import math
+import numpy as np
 
 import param_set
-import global_vars 
+import global_vars
 import generator
 
-def simulate(params, sample_sizes, region_len, seed):
+def simulate(params, sample_sizes, seed):
     """Note this is a 1 population model"""
     assert len(sample_sizes) == 1
 
@@ -33,57 +35,71 @@ def simulate(params, sample_sizes, region_len, seed):
     )
 
     ts = msprime.sim_ancestry(
-        samples=sum(sample_sizes),
+        samples=[msprime.SampleSet(sum(sample_sizes), population="A", ploidy=1)],
         demography=demography,
-        sequence_length=region_len,
+        sequence_length=global_vars.L,
         recombination_rate=params.rho.value,
         discrete_genome=True,
         random_seed=seed,
+        ploidy=2
     )
 
     # define RateMap
     mutator_start_pos = params.mutator_start.value
     mutator_interval_length = params.mutator_length.value
-    ratemap = msprime.RateMap(position=[0, mutator_start_pos, mutator_start_pos + mutator_interval_length, global_vars.L], rate=[params.mu.value, params.mu.value * params.mutator_effect, params.mu.value],)
+    ratemap = msprime.RateMap(
+        position=[
+            0, mutator_start_pos, mutator_start_pos + mutator_interval_length,
+            global_vars.L
+        ],
+        rate=[
+            params.mu.value, params.mu.value * params.mutator_effect,
+            params.mu.value
+        ],
+    )
 
     # simulate mutation rate up until specified time with normal mutation rate
     mts = msprime.sim_mutations(
         ts,
         rate=params.mu.value,
         random_seed=seed,
-        discrete_genome=True,
+        discrete_genome=False,
         start_time = params.mutator_emergence.value
     )
 
     # after mutator emergence, simulate higher mutation rate in a unique region
-    mts = msprime.sim_mutations(mts, rate=ratemap, random_seed=seed, discrete_genome=True, end_time = params.mutator_emergence.value)
+    mts = msprime.sim_mutations(
+        mts,
+        rate=ratemap,
+        random_seed=seed,
+        discrete_genome=False,
+        end_time=params.mutator_emergence.value,
+    )
 
     return mts
 
 parameters = param_set.ParamSet()
 
 # set inferred parameter values to the values inferred using the GAN
-expected_params = [9_000, 5_000, 2_000, 350, 5e-3]
+expected_params = [21_705, 3_581, 4_269, 899, 5.67e-3]
 
 # define a Generator object with the above simulator
 # NOTE: we can only update parameter values for the parameter names specified
 # when we initialize the generator. so, in order to make sure the N1, N2 etc.
-# parameter values are always the "inferred" values, we have to redudnantly 
+# parameter values are always the "inferred" values, we have to redudnantly
 # include those names in the initialization
-generator = generator.Generator(simulate, ["N1", "N2", "T1", "T2", "growth", "mutator_emergence", "mutator_length", "mutator_start", "mutator_effect"], [100], 42)
+generator = generator.Generator(simulate, ["N1", "N2", "T1", "T2", "growth", "mutator_emergence", "mutator_length", "mutator_start", "mutator_effect"], [200], 42)
 
 # first, simulate a batch of 10_000 "normal" regions with normal mutaiton rates
 # and inferred parameters
 BATCH_SIZE = 10_000
 
-region_lens = np.array([global_vars.L] * BATCH_SIZE)
-
 # for normal batches, we pass in some benign values for the mutator effect
-mutator_params [1_000, 1_000, 1_000, 1.]
-normal_batches = generator.simulate_batch(region_lens, global_vars.L, batch_size = BATCH_SIZE, params = expected_params + mutator_params)
+mutator_params = [1_000, 1_000, 1_000, 1.]
+normal_batches = generator.simulate_batch(batch_size = BATCH_SIZE, params = expected_params + mutator_params)
 
 training_batches = np.zeros(
-            (batch_size, 200, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
+            (BATCH_SIZE, 200, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
             dtype=np.float32)
 
 # define parameter objects for each of the mutator variables
@@ -98,20 +114,19 @@ for batch in range(BATCH_SIZE):
     # random parameters for the mutator variables
     random_param_vals = [p.start() for p in mutator_params]
 
-    normal_batch = generator.simulate_batch(region_lens, global_vars.L, batch_size = 1, params = expected_params + random_param_vals)
-    training_batches[batch] = normal_batch 
+    normal_batch = generator.simulate_batch(batch_size = 1, params = expected_params + random_param_vals)
+    training_batches[batch] = normal_batch
 
 combined_data = np.concatenate(training_batches, normal_batches, axis=0)
 combined_labels = np.tile([1, 0], BATCH_SIZE)
 
-disc = tf.saved_model.load(input_folder)
-disc_recon = discriminator.OnePopModel(100,
-        saved_model=disc)
+disc = tf.saved_model.load("saved_model/3262024358/fingerprint.pb")
+disc_recon = discriminator.OnePopModel(200, saved_model=disc)
 
 X_train, X_test, y_train, y_test = train_test_split(combined_data,
                                                     combined_labels,
                                                     test_size=0.2,
                                                     random_state=42)
 
-history = disc_recon.fit(X_train, y_train, epochs=10, 
+history = disc_recon.fit(X_train, y_train, epochs=10,
                     validation_data=(X_test, y_test))

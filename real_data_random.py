@@ -72,10 +72,10 @@ def read_exclude(fh: str) -> IntervalTree:
 def prep_real_region(
     haplotypes: np.ndarray,
     positions: np.ndarray,
-    # reference_alleles: np.ndarray,
-    # alternate_alleles: np.ndarray,
-    # ancestor: mutyper.Ancestor,
-    # chrom: str,
+    reference_alleles: np.ndarray,
+    alternate_alleles: np.ndarray,
+    ancestor: mutyper.Ancestor,
+    chrom: str,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     prepare the feature array for a real region.
@@ -92,7 +92,26 @@ def prep_real_region(
     n_snps, n_haps = haplotypes.shape
     assert n_snps == global_vars.NUM_SNPS
 
-    seg = util.find_segregating_idxs(haplotypes)
+    X = np.zeros((n_snps, n_haps, 6), dtype=np.float32)
+
+    # loop over SNPs
+    for vi in range(n_snps):
+        # only include mutations that occur at a confidently polarized
+        # nucleotide in the ancestral reference genome.
+        # NOTE: we do this so that we only include mutations that occurred
+        # in the space of nucleotides described by the root distribution in
+        # the ancestral reference genome sequence.
+        # NOTE: always assuming that we're only dealing with biallelics
+        mutation = ancestor.mutation_type(
+            chrom,
+            int(positions[vi]), # NOTE: why is explicit int conversion necessary here? it is...
+            reference_alleles[vi].decode("utf-8"),
+            alternate_alleles[vi][0].decode("utf-8"),
+        )
+        mut_i = global_vars.MUT2IDX[">".join(mutation)]
+        X[vi, :, mut_i] = haplotypes[vi]
+
+    seg = util.find_segregating_idxs(X)
     # if seg.shape[0] < 36:
     #     print (f"{seg.shape[0] / 36} segregating sites in real data")
 
@@ -129,7 +148,7 @@ def get_root_nucleotide_dist(sequence: str):
 
 class RealDataRandomIterator:
 
-    def __init__(self, hdf_fh: str, bed_file: str, seed: int):
+    def __init__(self, hdf_fh: str, bed_file: str, seed: int, use_full_spectrum: bool = False):
 
         self.rng = np.random.default_rng(seed)
 
@@ -137,6 +156,7 @@ class RealDataRandomIterator:
 
         # array of chromosomes
         self.chromosomes = callset['variants/CHROM']
+        self.use_full_spectrum = use_full_spectrum
 
         # array of haplotypes
         raw_gts = callset['calldata/GT']
@@ -161,8 +181,8 @@ class RealDataRandomIterator:
         self.num_haplotypes = self.haplotypes.shape[1]
 
         # read in ancestral sequence using mutyper
-        # ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
-        # self.ancestor = ancestor
+        ancestor = mutyper.Ancestor(ref_fh, k=1, sequence_always_upper=True)
+        self.ancestor = ancestor
 
         AUTOSOMES = list(map(str, range(1, 23)))
         AUTOSOMES = [f"chr{c}" for c in AUTOSOMES]
@@ -257,14 +277,14 @@ class RealDataRandomIterator:
             region, positions = prep_real_region(
                 haps,
                 sites,
-                # self.reference_alleles[start_idx:end_idx],
-                # self.alternate_alleles[start_idx:end_idx],
-                # self.ancestor,
-                # chromosome,
+                self.reference_alleles[start_idx:end_idx],
+                self.alternate_alleles[start_idx:end_idx],
+                self.ancestor,
+                chromosome,
             )
-            # sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
-            # root_dist = get_root_nucleotide_dist(sequence)
-            return region, positions
+            sequence = str(self.ancestor[chromosome][start_pos:end_pos].seq).upper()
+            root_dist = get_root_nucleotide_dist(sequence)
+            return region, root_dist, positions
 
         # try again recursively if not in accessible region
         else:
@@ -277,30 +297,31 @@ class RealDataRandomIterator:
         batch_size=global_vars.BATCH_SIZE,
     ):
 
+        num_channels = 7 if self.use_full_spectrum else 2
         # store the actual haplotype "images" in each batch within this region
         regions = np.zeros(
             (
                 batch_size,
                 self.num_haplotypes,
                 global_vars.NUM_SNPS,
-                global_vars.NUM_CHANNELS,
+                num_channels,
             ),
             dtype=np.float32,
         )
 
         # store the root distribution of nucleotides in each region
-        # root_dists = np.zeros((batch_size, 4))
+        root_dists = np.zeros((batch_size, 4))
         # store the lengths of the sampled regions
         region_lens = np.zeros(batch_size)
 
         for i in range(batch_size):
-            region, positions = self.sample_real_region()
+            region, root_dist, positions = self.sample_real_region()
             region_lens[i] = positions[-1] - positions[0]
-            fixed_region = util.process_region(region, positions, norm_len)
+            fixed_region = util.process_region(region, positions, norm_len, use_full_spectrum = self.use_full_spectrum,)
             regions[i] = fixed_region
-            # root_dists[i] = root_dist
+            root_dists[i] = root_dist
 
-        return regions, region_lens
+        return regions, root_dists, region_lens
 
 
 if __name__ == "__main__":

@@ -111,6 +111,7 @@ def find_segregating_idxs(X: np.ndarray):
 def process_region(
     X: np.ndarray,
     positions: np.ndarray,
+    use_full_spectrum: bool = False,
 ) -> np.ndarray:
     """
     Process an array of shape (n_sites, n_haps, 6), which is produced
@@ -130,7 +131,7 @@ def process_region(
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps = X.shape
+    n_sites, n_haps, n_channels = X.shape
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
 
@@ -143,8 +144,9 @@ def process_region(
     half_S = global_vars.NUM_SNPS // 2
 
     # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
+    num_channels = 7 if use_full_spectrum else 2
     region = np.zeros(
-        (n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
+        (n_haps, global_vars.NUM_SNPS, num_channels),
         dtype=np.float32,
     )
 
@@ -152,14 +154,16 @@ def process_region(
     distances = inter_snp_distances(positions, global_vars.L)
 
     # first, transpose the full input matrix to be n_haps x n_snps
-    X = X.T
+    if use_full_spectrum: X = np.transpose(X, (1, 0, 2))
+    else: X = np.expand_dims(np.sum(np.transpose(X, (1, 0, 2)), axis=2), axis=2)
+    #X = np.transpose(X, (1, 0, 2))
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
         # define indices to use for slicing
         i, j = mid - half_S, mid + half_S
         # add sites to output
-        region[:, :, 0] = major_minor(X[:, i:j])
+        region[:, :, :-1] = major_minor(X[:, i:j, :])
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
@@ -172,14 +176,12 @@ def process_region(
         i, j = half_S - mid, mid + other_half_S
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, i:j, 0] = major_minor(X)
+        region[:, i:j, :-1] = major_minor(X)
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         region[:, i:j, -1] = distances_tiled
-
-    # np.random.shuffle(region)
 
     return region
 
@@ -202,24 +204,31 @@ def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites = matrix.shape
-
+    n_haps, n_sites, n_channels = matrix.shape
+    
     # figure out the channel in which each mutation occurred
     for site_i in range(n_sites):
-        # in this channel, figure out whether this site has any
-        # derived alleles
-        haplotypes = matrix[:, site_i]
-        # if not, we'll mask all haplotypes at this site on this channel,
-        # leaving the channel with the actual mutation unmasked
-        if np.sum(haplotypes) > (n_haps / 2):
-            # if greater than 50% of haplotypes are ALT, reverse
-            # the REF/ALT polarization
-            haplotypes = 1 - haplotypes
-
-        matrix[:, site_i] = haplotypes
-
-    matrix[matrix == 0] = -1
-
+        #channel_haplotypes = matrix[:, site_i, :]        
+        for mut_i in range(n_channels):
+            # in this channel, figure out whether this site has any derived alleles
+            haplotypes = matrix[:, site_i, mut_i]
+            # if not, we'll mask all haplotypes at this site on this channel,
+            # leaving the channel with the actual mutation unmasked
+            if np.count_nonzero(haplotypes) == 0: continue
+            else:
+                # if there are derived alleles and there are more derived than ancestral,
+                # flip the polarization
+                if np.count_nonzero(haplotypes) > (n_haps / 2):
+                    # if greater than 50% of haplotypes are ALT, reverse
+                    # the REF/ALT polarization
+                    haplotypes = 1 - haplotypes
+                    haplotypes[haplotypes == 0] = -1
+                    matrix[:, site_i, mut_i] = haplotypes
+                # if there are fewer derived than ancestral, keep the haplotypes as is
+                else:
+                    haplotypes[haplotypes == 0] = -1
+                    matrix[:, site_i, mut_i] = haplotypes
+    #matrix[matrix == 0] = -1
     return matrix
 
 
@@ -279,7 +288,7 @@ def parse_args():
         help="prefix for output csv",
     )
     p.add_argument(
-        "-spectrum",
+        "-use_full_spectrum",
         action="store_true",
         help="whether to use a 7-channel mutation spectrum image instead of a 2-channel mutation image",
     )
@@ -302,7 +311,13 @@ def process_args(args):
 
     # always using the EXP model, with a single population
     num_pops = 2
-    simulator = simulation.simulate_im
+    simulator = simulation.simulate_ooa
+
+    # plot demography
+    default_params = param_set.ParamSet()
+    simulator(default_params, [100, 100], np.array([0.25] * 4), 42, plot=True)
+
+    print ("Using full mutation spectrum?", args.use_full_spectrum)
 
     # if a data path is specified, we'll use those data for
     # the Iterator object.
@@ -313,9 +328,10 @@ def process_args(args):
             hdf_fh=args.data,
             bed_file=args.bed,
             seed=args.seed,
+            use_full_spectrum=args.use_full_spectrum,
         )
-        h_total = iterator.num_haplotypes
-        sample_sizes = [h_total // num_pops for _ in range(num_pops)]
+        #h_total = iterator.num_haplotypes
+        #sample_sizes = [h_total // num_pops for _ in range(num_pops)]
         #sample_sizes = [14, 8]
 
     # otherwise, we'll use the Generator
@@ -325,13 +341,13 @@ def process_args(args):
             simulator=simulator,
             param_names=param_names,
             sample_sizes=sample_sizes,
-            #sample_sizes = sample_sizes,
             seed=args.seed,
+            use_full_spectrum=args.use_full_spectrum,
         )
-        h_total = global_vars.NUM_HAPLOTYPES
+        #h_total = global_vars.NUM_HAPLOTYPES
 
 
-    print (f"ITERATOR is using {h_total} haplotypes")
+    #print (f"ITERATOR is using {h_total} haplotypes")
 
     # figure out how many haplotypes the Generator object should be simulating in each batch
     # we want this to match the number of haplotypes being sampled in the VCF
@@ -343,6 +359,7 @@ def process_args(args):
         param_names=param_names,
         sample_sizes=sample_sizes,
         seed=args.seed,
+        use_full_spectrum=args.use_full_spectrum,
     )
 
     return gen, iterator, parameters, sample_sizes, args.entropy

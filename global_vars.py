@@ -3,7 +3,7 @@
 NUM_SNPS = 36 * 1      # number of seg sites, should be divisible by 4
 BATCH_SIZE = 50 # number of real/simulated regions to sample in a given batch
 L = 50_000
-NUM_HAPLOTYPES = 198
+NUM_HAPLOTYPES = 200
 
 
 DEFAULT_SEED = 1833
@@ -14,7 +14,7 @@ REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
 NUC_ORDER = ["A", "C", "G", "T"]
 NUC2IDX = dict(zip(NUC_ORDER, range(4)))
 
-NUM_CHANNELS = 2
+#NUM_CHANNELS = 7
 
 # section B: overwriting in-file data-------------------------------------------
 

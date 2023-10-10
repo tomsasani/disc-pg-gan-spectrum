@@ -22,7 +22,7 @@ def get_transition_matrix():
     # define expected mutation probabilities
     mutations = ["C>T", "C>A", "C>G", "A>T", "A>C", "A>G"]
     lambdas = np.array([0.25, 0.1, 0.1, 0.1, 0.1, 0.35])
-
+    lambdas = np.array([0.46, 0.17, 0.12, 0.1, 0.075, 0.17])
     transition_matrix = np.zeros((4, 4))
 
     # for every mutation type...
@@ -119,7 +119,7 @@ def simulate_exp(params, sample_sizes, seed):
 
     return mts
 
-def simulate_im(params, sample_sizes, seed):
+def simulate_im_old(params, sample_sizes, seed):
     """Note this is a 2 population model"""
     assert len(sample_sizes) == 2
 
@@ -170,7 +170,111 @@ def simulate_im(params, sample_sizes, seed):
 
     return ts
 
-def simulate_gough(params, sample_sizes, seed):
+def simulate_im(params, sample_sizes, root_dist, seed, plot: bool = False):
+    demography = msprime.Demography()
+
+    demography.add_population(name="A", initial_size=params.N1.value, growth_rate=0,)
+    demography.add_population(name="B", initial_size=params.N2.value, growth_rate=0,)
+    demography.add_population(name="ancestral", initial_size=params.N_anc.value, growth_rate=0,)
+
+    # directional (pulse)
+    if params.mig.value >= 0:
+        # migration from pop 1 into pop 0 (back in time)
+        demography.add_mass_migration(time = params.T2.value / 2, source = "A", dest = "B", proportion = abs(params.mig.value))
+    else:
+        # migration from pop 0 into pop 1 (back in time)
+        demography.add_mass_migration(time = params.T2.value / 2, source = "B", dest = "A", proportion = abs(params.mig.value))
+
+    demography.add_population_split(time=params.T1.value, derived=["A", "B"], ancestral="ancestral")
+
+    if plot:
+        graph = msprime.Demography.to_demes(demography)
+        f, ax = plt.subplots()  # use plt.rcParams["figure.figsize"]
+        demesdraw.tubes(graph, ax=ax, seed=1)
+        f.savefig('im_demography.png', dpi=200)
+
+    ts = msprime.sim_ancestry(
+        #samples=sum(sample_sizes),
+        samples=[
+            msprime.SampleSet(sample_sizes[0], population="A", ploidy=1),
+            msprime.SampleSet(sample_sizes[1], population="B", ploidy=1),
+        ],
+        demography=demography,
+        sequence_length=global_vars.L,
+        recombination_rate=params.rho.value,
+        discrete_genome=False,  # ensure no multi-allelics
+        random_seed=seed,
+        ploidy=2,
+    )
+
+    mutation_model = parameterize_mutation_model(root_dist)
+
+    mts = msprime.sim_mutations(
+        ts,
+        rate=params.mu.value,
+        model=mutation_model,
+        random_seed=seed,
+        discrete_genome=False,
+    )
+
+    return mts
+
+def simulate_ooa(params, sample_sizes, root_dist, seed, plot: bool = False):
+    """Note this is a 2 population model"""
+    assert len(sample_sizes) == 2
+
+    demography = msprime.Demography()
+
+    demography.add_population(name="EUR", initial_size=params.N2.value, growth_rate=0,)
+    demography.add_population(name="AFR", initial_size=params.N3.value, growth_rate=0,)
+    demography.add_population(name="ancestral", initial_size=params.N_anc.value, growth_rate=0,)
+
+    # directional (pulse)
+    if params.mig.value >= 0:
+        # migration from pop 1 into pop 0 (back in time)
+        demography.add_mass_migration(time = params.T2.value, source = "EUR", dest = "AFR", proportion = abs(params.mig.value))
+    else:
+        # migration from pop 0 into pop 1 (back in time)
+        demography.add_mass_migration(time = params.T2.value, source = "AFR", dest = "EUR", proportion = abs(params.mig.value))
+
+    #demography.add_symmetric_migration_rate_change(time=params.T2.value, populations = ["EUR", "AFR"], rate = params.mig.value)
+    demography.add_population_parameters_change(time=params.T2.value, initial_size=params.N1.value, population="EUR")
+    demography.add_population_split(time=params.T1.value, derived=["EUR", "AFR"], ancestral="ancestral")
+
+
+    if plot:
+        graph = msprime.Demography.to_demes(demography)
+        f, ax = plt.subplots()  # use plt.rcParams["figure.figsize"]
+        demesdraw.tubes(graph, ax=ax, seed=1)
+        f.savefig('ooa_demography.png', dpi=200)
+
+    ts = msprime.sim_ancestry(
+        #samples=sum(sample_sizes),
+        samples=[
+            msprime.SampleSet(sample_sizes[0], population="EUR", ploidy=1),
+            msprime.SampleSet(sample_sizes[1], population="AFR", ploidy=1),
+        ],
+        demography=demography,
+        sequence_length=global_vars.L,
+        recombination_rate=params.rho.value,
+        discrete_genome=False,  # ensure no multi-allelics
+        random_seed=seed,
+        ploidy=2,
+    )
+
+    mutation_model = parameterize_mutation_model(root_dist)
+
+    mts = msprime.sim_mutations(
+        ts,
+        rate=params.mu.value,
+        model=mutation_model,
+        random_seed=seed,
+        discrete_genome=False,
+    )
+
+    return mts
+
+def simulate_gough(params, sample_sizes, root_dist, seed, plot: bool = False):
     """Note this is a 2 population model"""
     assert len(sample_sizes) == 2
 
@@ -219,23 +323,24 @@ def simulate_gough(params, sample_sizes, seed):
         ancestral="ancestral",
     )
 
-    # demography.add_instantaneous_bottleneck(
+    # demography.add_simple_bottleneck(
     #     time=params.T_mainland_bottleneck.value,
     #     population="ancestral",
-    #     strength=params.D_mainland_bottleneck.value
+    #     proportion=params.D_mainland_bottleneck.value
     # )
 
-    # graph = msprime.Demography.to_demes(demography)
-    # f, ax = plt.subplots()  # use plt.rcParams["figure.figsize"]
-    # demesdraw.tubes(graph, ax=ax, seed=1)
-    # f.savefig('gough_demography.png', dpi=200)
+    if plot:
+        graph = msprime.Demography.to_demes(demography)
+        f, ax = plt.subplots()  # use plt.rcParams["figure.figsize"]
+        demesdraw.tubes(graph, ax=ax, seed=1)
+        f.savefig('gough_demography.png', dpi=200)
 
     # sample sample_sizes monoploid haplotypes from the diploid population
     ts = msprime.sim_ancestry(
         #samples=sum(sample_sizes),
         samples=[
-            msprime.SampleSet(sample_sizes[0], population="gough", ploidy=2),
-            msprime.SampleSet(sample_sizes[1], population="mainland", ploidy=2),
+            msprime.SampleSet(sample_sizes[0], population="gough", ploidy=1),
+            msprime.SampleSet(sample_sizes[1], population="mainland", ploidy=1),
         ],
         demography=demography,
         sequence_length=global_vars.L,
@@ -246,13 +351,12 @@ def simulate_gough(params, sample_sizes, seed):
     )
 
     # define mutation model
-    # mutation_model = parameterize_mutation_model(root_dist)
+    mutation_model = parameterize_mutation_model(root_dist)
 
     mts = msprime.sim_mutations(
         ts,
         rate=params.mouse_mu.value,
-        #model=msprime.JC69(state_independent=False),
-        #model=msprime.BinaryMutationModel(), # ensure no silent
+        model=mutation_model,
         random_seed=seed,
         discrete_genome=False,
     )
@@ -262,4 +366,4 @@ def simulate_gough(params, sample_sizes, seed):
 if __name__ == "__main__":
     params = param_set.ParamSet()
 
-    simulate_gough(params, [30, 30], 4242)
+    simulate_gough(params, [28, 16], np.array([0.25]* 4), 4242, plot=True)
